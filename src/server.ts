@@ -74,14 +74,10 @@ async function toolResult(text: string, action: Promise<unknown>) {
       content: [{ type: 'text' as const, text }],
       structuredContent: payload,
     };
-  } catch (error) {
+  } catch {
     return {
       isError: true,
-      content: [{ type: 'text' as const, text: errorMessage(error) }],
+      content: [{ type: 'text' as const, text: 'ManaWG request failed' }],
     };
   }
-}
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : 'unknown_error';
 }
