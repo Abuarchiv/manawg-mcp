@@ -10,10 +10,10 @@ export type AppConfig = {
   timeoutMs: number;
 };
 
-function required(env: NodeJS.ProcessEnv, name: string): string {
+function required(env: NodeJS.ProcessEnv, name: string, errorMessage = `${name} is required`): string {
   const value = env[name]?.trim();
   if (!value) {
-    throw new Error(`${name} is required`);
+    throw new Error(errorMessage);
   }
   return value;
 }
@@ -31,14 +31,14 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   }
 
   const wgCode = required(env, 'MANAWG_WG_CODE');
-  const memberId = required(env, 'MANAWG_MEMBER_ID');
+  const memberId = required(env, 'MANAWG_MEMBER_ID', 'Invalid configuration');
   if (!UUID_PATTERN.test(memberId)) {
-    throw new Error('MANAWG_MEMBER_ID must be a UUID');
+    throw new Error('Invalid configuration');
   }
 
-  const memberToken = required(env, 'MANAWG_MEMBER_TOKEN');
+  const memberToken = required(env, 'MANAWG_MEMBER_TOKEN', 'Invalid configuration');
   if (!MEMBER_TOKEN_PATTERN.test(memberToken)) {
-    throw new Error('MANAWG_MEMBER_TOKEN must be 64 hexadecimal characters');
+    throw new Error('Invalid configuration');
   }
 
   return {
