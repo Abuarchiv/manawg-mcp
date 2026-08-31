@@ -88,6 +88,7 @@ export function createManaWgClient(config: AppConfig, fetchImpl: typeof fetch = 
       method: options.method ?? 'GET',
       headers,
       body: options.body === undefined ? undefined : JSON.stringify(options.body),
+      redirect: 'error',
       signal: AbortSignal.timeout(config.timeoutMs),
     };
   }

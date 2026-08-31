@@ -167,3 +167,73 @@ v22.23.2
 - The safe tool error is deliberately generic. Add an explicit stable-code allowlist only if MCP callers need code-specific recovery.
 - The previously reported coverage gap for `chore_complete`, resource reads, and tool error serialization is closed by the Round 1 tests.
 - No HTTP details were duplicated in handlers, and no stdout logging was added.
+
+## Final Terra-Max Review Fix — Resources und Tool-Schemas
+
+### Status
+
+DONE
+
+### RED
+
+Ausgeführt unter Node 22:
+
+```text
+PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm test -- test/manawg-client.test.ts test/server.test.ts
+```
+
+Beobachtet: `test/server.test.ts` schlug mit den neuen Resource- und Schema-Regressionen fehl:
+
+```text
+returns a safe resource error for dashboard client failures
+expected 'leaked sssss...' to contain 'ManaWG request failed'
+
+returns a safe resource error for shopping client failures
+expected 'leaked sssss...' to contain 'ManaWG request failed'
+
+trims shopping_add input before calling the client
+expected { name: '  Milch  ', quantity: '  2  ' } to equal { name: 'Milch', quantity: '2' }
+```
+
+Außerdem wurden die neuen Boundary-Fälle für `name` > 120, `quantity` > 40, whitespace-only Werte nach Trim und nicht-UUID `choreId` vor dem Fix nicht an der MCP-Grenze abgewiesen.
+
+### GREEN
+
+Ausgeführt unter Node 22:
+
+```text
+PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm test -- test/manawg-client.test.ts test/server.test.ts
+PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm typecheck
+PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm build
+PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm test
+```
+
+Beobachtet:
+
+```text
+test/manawg-client.test.ts (18 tests) PASS
+test/server.test.ts (17 tests) PASS
+test/config.test.ts (7 tests) PASS
+pnpm typecheck PASS
+pnpm build PASS
+```
+
+Node runtime:
+
+```text
+v22.23.2
+```
+
+### Geänderte Dateien
+
+- `src/server.ts`
+- `test/server.test.ts`
+- `package.json`
+
+Die beiden Resource-Handler fangen Clientfehler jetzt ab und geben nur die bestehende generische MCP-Fehlermeldung `ManaWG request failed` weiter. Die Tool-Schemas trimmen `name` und `quantity`, begrenzen `name` auf 120 und `quantity` auf 40 Zeichen und erzwingen fuer `choreId` eine UUID. Das getrimmte `shopping_add`-Input wird an den Client weitergereicht.
+
+Der Minor-Hinweis ist mit der kleinsten Package-Aenderung behoben: `engines.node` ist jetzt `>=22.12.0 <23`, passend zur gelockten Vite-Untergrenze.
+
+### Bedenken
+
+Keine. Die MCP-Oberflaeche bleibt bei denselben zwei Resources und zwei Tools; nur Boundary-Validierung und sichere Fehlerweitergabe wurden verschaerft.

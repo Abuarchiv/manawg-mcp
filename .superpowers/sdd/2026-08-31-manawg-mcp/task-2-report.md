@@ -121,3 +121,64 @@ Der Adapter akzeptiert jetzt nur noch eine explizite, begrenzte Allowlist stabil
 ### Bedenken
 
 Keine. Die bestehenden Retry-, Header- und URL-Encoding-Regeln blieben unverändert, und der ManaWG-App-Checkout wurde nicht verändert.
+
+## Final Terra-Max Review Fix — Redirect-Leak
+
+### Status
+
+DONE
+
+### RED
+
+Ausgeführt unter Node 22:
+
+```text
+PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm test -- test/manawg-client.test.ts test/server.test.ts
+```
+
+Beobachtet: `test/manawg-client.test.ts` schlug mit dem neuen Redirect-Test fehl:
+
+```text
+rejects redirects before member headers can reach another origin
+promise resolved "{ openShopping: [] }" instead of rejecting
+```
+
+Damit war bestätigt, dass natives `fetch` dem Redirect folgte und das Cross-Origin-Ziel erreichen konnte.
+
+### GREEN
+
+Ausgeführt unter Node 22:
+
+```text
+PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm test -- test/manawg-client.test.ts test/server.test.ts
+PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm typecheck
+PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm build
+PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm test
+```
+
+Beobachtet:
+
+```text
+test/manawg-client.test.ts (18 tests) PASS
+test/server.test.ts (17 tests) PASS
+test/config.test.ts (7 tests) PASS
+pnpm typecheck PASS
+pnpm build PASS
+```
+
+Node runtime:
+
+```text
+v22.23.2
+```
+
+### Geänderte Dateien
+
+- `src/manawg-client.ts`
+- `test/manawg-client.test.ts`
+
+Der Client setzt im gemeinsamen `RequestInit` jetzt `redirect: 'error'`. Der Regressionstest verwendet zwei lokale HTTP-Server und bestätigt, dass ein Redirect abgelehnt wird, bevor die Member-Header ein anderes Origin erreichen.
+
+### Bedenken
+
+Keine. Retry-, Idempotency-, Timeout-, URL-Encoding- und Fehlerredaktionslogik blieben unverändert.

@@ -8,13 +8,15 @@ type ManaWgClient = {
   completeChore(choreId: string): Promise<unknown>;
 };
 
+const SAFE_ERROR_MESSAGE = 'ManaWG request failed';
+
 const shoppingAddSchema = z.object({
-  name: z.string().min(1),
-  quantity: z.string().min(1).optional(),
+  name: z.string().trim().min(1).max(120),
+  quantity: z.string().trim().min(1).max(40).optional(),
 });
 
 const choreCompleteSchema = z.object({
-  choreId: z.string().min(1),
+  choreId: z.string().trim().uuid(),
 });
 
 export function buildServer(client: ManaWgClient): McpServer {
@@ -24,14 +26,14 @@ export function buildServer(client: ManaWgClient): McpServer {
     'current_dashboard',
     'manawg://current/dashboard',
     { title: 'Current ManaWG dashboard', mimeType: 'application/json' },
-    async (uri) => jsonResource(uri, await client.getDashboard()),
+    async (uri) => safeJsonResource(uri, () => client.getDashboard()),
   );
 
   server.registerResource(
     'current_shopping',
     'manawg://current/shopping',
     { title: 'Current ManaWG shopping list', mimeType: 'application/json' },
-    async (uri) => jsonResource(uri, await client.getShopping()),
+    async (uri) => safeJsonResource(uri, () => client.getShopping()),
   );
 
   server.registerTool(
@@ -67,6 +69,14 @@ function jsonResource(uri: URL, payload: unknown) {
   };
 }
 
+async function safeJsonResource(uri: URL, read: () => Promise<unknown>) {
+  try {
+    return jsonResource(uri, await read());
+  } catch {
+    throw new Error(SAFE_ERROR_MESSAGE);
+  }
+}
+
 async function toolResult(text: string, action: Promise<unknown>) {
   try {
     const payload = await action;
@@ -77,7 +87,7 @@ async function toolResult(text: string, action: Promise<unknown>) {
   } catch {
     return {
       isError: true,
-      content: [{ type: 'text' as const, text: 'ManaWG request failed' }],
+      content: [{ type: 'text' as const, text: SAFE_ERROR_MESSAGE }],
     };
   }
 }

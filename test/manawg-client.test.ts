@@ -1,4 +1,6 @@
-import { expect, it, vi } from 'vitest';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { afterEach, expect, it, vi } from 'vitest';
 import type { AppConfig } from '../src/config.js';
 import { createManaWgClient } from '../src/manawg-client.js';
 
@@ -13,11 +15,35 @@ const validConfig: AppConfig = {
   timeoutMs: 10_000,
 };
 
+const cleanup: Array<() => Promise<void>> = [];
+
+afterEach(async () => {
+  while (cleanup.length > 0) {
+    await cleanup.pop()!();
+  }
+});
+
 function jsonResponse(body: unknown, status = 200): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: { 'content-type': 'application/json' },
   });
+}
+
+async function listen(
+  handler: (request: IncomingMessage, response: ServerResponse) => void,
+): Promise<string> {
+  const server = createServer(handler);
+  await new Promise<void>((resolve) => {
+    server.listen(0, '127.0.0.1', resolve);
+  });
+  cleanup.push(
+    () =>
+      new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      }),
+  );
+  return `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
 }
 
 async function rejectedMessage(promise: Promise<unknown>): Promise<string> {
@@ -55,6 +81,25 @@ it('url-encodes the WG code when reading shopping data', async () => {
   await client.getShopping();
 
   expect(fetchMock.mock.calls[0]![0]).toBe('https://example.test/api/wg/WG%201%2F2/shopping');
+});
+
+it('rejects redirects before member headers can reach another origin', async () => {
+  let targetHeaders: IncomingMessage['headers'] | undefined;
+  const targetBaseUrl = await listen((request, response) => {
+    targetHeaders = request.headers;
+    response.setHeader('content-type', 'application/json');
+    response.end(JSON.stringify({ openShopping: [] }));
+  });
+  const sourceBaseUrl = await listen((_request, response) => {
+    response.statusCode = 302;
+    response.setHeader('location', `${targetBaseUrl}/capture`);
+    response.end();
+  });
+
+  const client = createManaWgClient({ ...validConfig, baseUrl: sourceBaseUrl });
+
+  await expect(client.getDashboard()).rejects.toThrow('upstream_network_error');
+  expect(targetHeaders).toBeUndefined();
 });
 
 it('sends POST JSON with an idempotency key when adding a shopping item', async () => {

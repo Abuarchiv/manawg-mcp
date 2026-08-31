@@ -4,6 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import { buildServer } from '../src/server.js';
 
 const SECRET = 's'.repeat(64);
+const VALID_CHORE_ID = '00000000-0000-4000-8000-000000000002';
 
 type TestManaWgClient = {
   getDashboard: ReturnType<typeof vi.fn>;
@@ -25,7 +26,7 @@ function fakeManaWgClient(): TestManaWgClient {
     getDashboard: vi.fn().mockResolvedValue({ today: [] }),
     getShopping: vi.fn().mockResolvedValue({ items: [] }),
     addShoppingItem: vi.fn().mockResolvedValue({ item: { name: 'Milch', quantity: '2' } }),
-    completeChore: vi.fn().mockResolvedValue({ chore: { id: 'chore-1', completed: true } }),
+    completeChore: vi.fn().mockResolvedValue({ chore: { id: VALID_CHORE_ID, completed: true } }),
   };
 }
 
@@ -39,6 +40,18 @@ async function connectTestServer(server: McpServer) {
   cleanup.push(() => server.close());
 
   return client;
+}
+
+async function rejectedMessage(promise: Promise<unknown>): Promise<string> {
+  try {
+    await promise;
+  } catch (error) {
+    if (error instanceof Error) {
+      return error.message;
+    }
+    throw error;
+  }
+  throw new Error('Expected promise to reject');
 }
 
 it('exposes exactly the v1 resources and tools', async () => {
@@ -59,6 +72,15 @@ it('calls shopping_add with validated input', async () => {
   const client = await connectTestServer(buildServer(fake));
 
   await client.callTool({ name: 'shopping_add', arguments: { name: 'Milch', quantity: '2' } });
+
+  expect(fake.addShoppingItem).toHaveBeenCalledWith({ name: 'Milch', quantity: '2' });
+});
+
+it('trims shopping_add input before calling the client', async () => {
+  const fake = fakeManaWgClient();
+  const client = await connectTestServer(buildServer(fake));
+
+  await client.callTool({ name: 'shopping_add', arguments: { name: '  Milch  ', quantity: '  2  ' } });
 
   expect(fake.addShoppingItem).toHaveBeenCalledWith({ name: 'Milch', quantity: '2' });
 });
@@ -95,20 +117,59 @@ it('reads the current shopping resource as JSON', async () => {
   expect(fake.getShopping).toHaveBeenCalledOnce();
 });
 
+it.each([
+  ['dashboard', 'manawg://current/dashboard', 'getDashboard'],
+  ['shopping', 'manawg://current/shopping', 'getShopping'],
+] as const)('returns a safe resource error for %s client failures', async (_label, uri, method) => {
+  const fake = fakeManaWgClient();
+  fake[method].mockRejectedValue(new Error(`leaked ${SECRET} https://example.test/api/wg/WG123`));
+  const client = await connectTestServer(buildServer(fake));
+
+  const message = await rejectedMessage(client.readResource({ uri }));
+
+  expect(message).toContain('ManaWG request failed');
+  expect(message).not.toContain(SECRET);
+  expect(message).not.toContain('https://example.test');
+});
+
 it('calls chore_complete with validated input', async () => {
   const fake = fakeManaWgClient();
   const client = await connectTestServer(buildServer(fake));
 
-  const result = await client.callTool({ name: 'chore_complete', arguments: { choreId: 'chore-1' } });
+  const result = await client.callTool({ name: 'chore_complete', arguments: { choreId: VALID_CHORE_ID } });
 
-  expect(fake.completeChore).toHaveBeenCalledWith('chore-1');
-  expect(result.structuredContent).toEqual({ chore: { id: 'chore-1', completed: true } });
+  expect(fake.completeChore).toHaveBeenCalledWith(VALID_CHORE_ID);
+  expect(result.structuredContent).toEqual({ chore: { id: VALID_CHORE_ID, completed: true } });
 });
 
 it.each([
   ['shopping_add invalid name', 'shopping_add', { name: '', quantity: '2' }, 'addShoppingItem'],
+  [
+    'shopping_add trims before checking required name',
+    'shopping_add',
+    { name: '   ', quantity: '2' },
+    'addShoppingItem',
+  ],
+  [
+    'shopping_add invalid name length',
+    'shopping_add',
+    { name: 'a'.repeat(121), quantity: '2' },
+    'addShoppingItem',
+  ],
   ['shopping_add invalid quantity', 'shopping_add', { name: 'Milch', quantity: '' }, 'addShoppingItem'],
-  ['chore_complete invalid choreId', 'chore_complete', { choreId: '' }, 'completeChore'],
+  [
+    'shopping_add trims before checking required quantity',
+    'shopping_add',
+    { name: 'Milch', quantity: '   ' },
+    'addShoppingItem',
+  ],
+  [
+    'shopping_add invalid quantity length',
+    'shopping_add',
+    { name: 'Milch', quantity: 'a'.repeat(41) },
+    'addShoppingItem',
+  ],
+  ['chore_complete invalid choreId', 'chore_complete', { choreId: 'chore-1' }, 'completeChore'],
 ] as const)('rejects %s at the MCP boundary', async (_label, name, input, method) => {
   const fake = fakeManaWgClient();
   const client = await connectTestServer(buildServer(fake));
@@ -121,7 +182,7 @@ it.each([
 
 it.each([
   ['shopping_add', { name: 'Milch' }, 'addShoppingItem'],
-  ['chore_complete', { choreId: 'chore-1' }, 'completeChore'],
+  ['chore_complete', { choreId: VALID_CHORE_ID }, 'completeChore'],
 ] as const)('returns a safe tool error for %s client failures', async (name, input, method) => {
   const fake = fakeManaWgClient();
   fake[method].mockRejectedValue(new Error(`leaked ${SECRET} https://example.test/api/wg/WG123`));
