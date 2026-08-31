@@ -87,3 +87,83 @@ v22.23.2
 - That failed build attempt emitted untracked `test/*.js` artifacts; they were removed before committing.
 - Tool-call tests currently cover discovery and `shopping_add`; `chore_complete`, resource reads, and tool error results are implemented but not covered by additional Task-3 tests.
 - No official SDK API blocker remained after switching the test harness to `InMemoryTransport.createLinkedPair()`.
+
+# Round 1 Review Fix Report
+
+## Status
+
+Completed the Round 1 review findings.
+
+- Replaced arbitrary `Error.message` serialization with the fixed safe tool error text `ManaWG request failed`.
+- Added secret-bearing error tests for both tools.
+- Added MCP-boundary validation tests for invalid `shopping_add.name`, invalid `shopping_add.quantity`, and invalid `chore_complete.choreId`.
+- Added resource-read coverage for dashboard and shopping.
+- Added `chore_complete` success coverage.
+- Typed the test transport harness parameter as `McpServer` and removed the avoidable structural casts.
+
+## Commit SHA(s)
+
+- Review fix: `5d046a7cc825928f7daa3a402bb18b6439f5d686` (`fix: harden MCP tool error boundary`)
+
+## RED
+
+Command:
+
+```bash
+PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm test -- test/server.test.ts
+```
+
+Result:
+
+```text
+test/server.test.ts (10 tests | 2 failed)
+returns a safe tool error for shopping_add client failures
+returns a safe tool error for chore_complete client failures
+
+Expected text: ManaWG request failed
+Received text: leaked ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss https://example.test/api/wg/WG123
+```
+
+This confirmed the unsafe MCP tool error boundary before the fix.
+
+## GREEN
+
+Command:
+
+```bash
+PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm test -- test/server.test.ts && PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm typecheck && PATH=/opt/homebrew/opt/node@22/bin:$PATH pnpm build
+```
+
+Result:
+
+```text
+test/server.test.ts (10 tests) PASS
+pnpm typecheck PASS
+pnpm build PASS
+```
+
+Node runtime used for gates:
+
+```text
+v22.23.2
+```
+
+## Files
+
+- `src/server.ts`
+  - Stops returning raw client `Error.message` from tool failures.
+  - Returns fixed safe MCP tool error text.
+- `test/server.test.ts`
+  - Adds invalid-input boundary tests.
+  - Adds resource-read tests.
+  - Adds `chore_complete` success test.
+  - Adds safe tool-error tests for both tools.
+  - Removes avoidable transport-harness casts.
+- `.superpowers/sdd/2026-08-31-manawg-mcp/task-3-report.md`
+  - Appends this Round 1 report.
+
+## Bedenken
+
+- The safe tool error is deliberately generic. Add an explicit stable-code allowlist only if MCP callers need code-specific recovery.
+- The previously reported coverage gap for `chore_complete`, resource reads, and tool error serialization is closed by the Round 1 tests.
+- No HTTP details were duplicated in handlers, and no stdout logging was added.
