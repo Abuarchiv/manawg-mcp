@@ -160,6 +160,7 @@ git commit -m "feat: add safe ManaWG HTTP adapter"
 
 **Files:**
 - Create: `src/server.ts`, `src/index.ts`
+- Modify: `package.json`, `pnpm-lock.yaml`
 - Test: `test/server.test.ts`
 
 **Interfaces:**
@@ -191,6 +192,8 @@ it('calls shopping_add with validated input', async () => {
 - [ ] **Step 2: Run `pnpm test -- test/server.test.ts` and verify the server is missing**
 
 - [ ] **Step 3: Register resources and tools with Zod v4 schemas**
+
+Add the official v2 packages with pnpm before implementation: runtime `@modelcontextprotocol/server` and `zod`; development `@modelcontextprotocol/client`. Use the SDK's `McpServer`, `registerResource`, `registerTool`, and `serveStdio` interfaces; do not implement JSON-RPC manually.
 
 Return JSON resource contents with `application/json`. Return concise human-readable tool text plus structured JSON when the SDK supports it. Convert client errors into `isError: true` tool results without exposing credentials. Do not log from tool handlers.
 
