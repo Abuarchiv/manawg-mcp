@@ -40,7 +40,7 @@ Unit tests and typecheck do not need credentials.
 Load the env file and start the MCP host from the repo root:
 
 ```bash
-source /Users/abu/.config/manawg-mcp/env
+set -a; source /Users/abu/.config/manawg-mcp/env; set +a
 /opt/homebrew/opt/node@22/bin/node dist/index.js
 ```
 
