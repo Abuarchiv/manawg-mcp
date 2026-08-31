@@ -10,11 +10,17 @@
   "packageManager": "pnpm@9.15.9",
   "scripts": {
     "test": "vitest run",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build": "tsc --outDir dist --rootDir src --noEmit false --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --verbatimModuleSyntax --skipLibCheck --types node src/*.ts"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "^2",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0",
     "vitest": "^3.2.0"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "^2",
+    "zod": "^4.5.4"
   }
 }
