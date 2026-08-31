@@ -103,22 +103,23 @@ it.each([502, 503, 504])(
   },
 );
 
-it.each([400, 401, 403, 404, 409, 429])('does not retry HTTP %i writes', async (status) => {
-  const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
-    jsonResponse(
-      {
-        error: `secret:${validConfig.memberToken}`,
-        code: `upstream_code_${status}`,
-      },
-      status,
-    ),
-  );
+it.each([
+  [400, 'name_invalid'],
+  [401, 'member_id_invalid'],
+  [403, 'member_not_verified'],
+  [404, 'wg_not_found'],
+  [409, 'shopping_item_duplicate'],
+  [429, 'too_many_requests'],
+] as const)('does not retry HTTP %i writes', async (status, code) => {
+  const fetchMock = vi
+    .fn<typeof fetch>()
+    .mockResolvedValue(jsonResponse({ error: `secret:${validConfig.memberToken}`, code }, status));
   const client = createManaWgClient(validConfig, fetchMock);
 
   const message = await rejectedMessage(client.addShoppingItem({ name: 'Milch' }));
 
   expect(fetchMock).toHaveBeenCalledTimes(1);
-  expect(message).toBe(`upstream_code_${status}`);
+  expect(message).toBe(code);
   expect(message).not.toContain(validConfig.memberToken);
 });
 
@@ -126,6 +127,38 @@ it('falls back to the HTTP status when the upstream error has no stable code', a
   const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
     jsonResponse({ error: `secret:${validConfig.memberToken}` }, 500),
   );
+  const client = createManaWgClient(validConfig, fetchMock);
+
+  const message = await rejectedMessage(client.getDashboard());
+
+  expect(message).toBe('upstream_http_500');
+  expect(message).not.toContain(validConfig.memberToken);
+});
+
+it('falls back to the HTTP status when the upstream code is unknown or secret-bearing', async () => {
+  const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
+    jsonResponse(
+      {
+        error: 'conflict',
+        code: `secret:${validConfig.memberToken}`,
+      },
+      409,
+    ),
+  );
+  const client = createManaWgClient(validConfig, fetchMock);
+
+  const message = await rejectedMessage(client.addShoppingItem({ name: 'Milch' }));
+
+  expect(message).toBe('upstream_http_409');
+  expect(message).not.toContain(validConfig.memberToken);
+});
+
+it('sanitizes response body read failures', async () => {
+  const fetchMock = vi.fn<typeof fetch>().mockResolvedValue({
+    ok: false,
+    status: 500,
+    text: vi.fn().mockRejectedValue(new Error(`secret:${validConfig.memberToken}`)),
+  } as unknown as Response);
   const client = createManaWgClient(validConfig, fetchMock);
 
   const message = await rejectedMessage(client.getDashboard());
