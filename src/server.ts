@@ -2,6 +2,7 @@ import { createRequire } from 'node:module';
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/server';
 import type { ManaWgClient, WgRequest } from './manawg-client.js';
 import { ManaWgError } from './manawg-client.js';
+import { DEFAULT_MAX_BYTES, capPayload } from './payload.js';
 import { PROMPT_DEFS } from './prompts.js';
 import {
   RESOURCE_DEFS,
@@ -67,9 +68,14 @@ function registerEntityResource(
       }
       try {
         const payload = await client.call({ method: 'GET', path: def.path(id) });
+        const capped = capPayload(payload, { maxBytes: DEFAULT_MAX_BYTES });
         return {
           contents: [
-            { uri: uri.href, mimeType: 'application/json', text: JSON.stringify(payload) },
+            {
+              uri: uri.href,
+              mimeType: 'application/json',
+              text: JSON.stringify(capped.payload),
+            },
           ],
         };
       } catch (error) {
@@ -112,9 +118,13 @@ function registerResource(server: McpServer, client: ManaWgClient, def: Resource
       }
       try {
         const payload = await client.call(request);
+        const capped = capPayload(payload, {
+          maxBytes: DEFAULT_MAX_BYTES,
+          ...def.limits,
+        });
         return {
           contents: [
-            { uri: uri.href, mimeType: 'application/json', text: JSON.stringify(payload) },
+            { uri: uri.href, mimeType: 'application/json', text: JSON.stringify(capped.payload) },
           ],
         };
       } catch (error) {
@@ -155,7 +165,9 @@ function registerTool(server: McpServer, client: ManaWgClient, def: ToolDef): vo
       }
 
       try {
-        const payload = await client.call(request);
+        const upstream = await client.call(request);
+        const transformed = def.transform ? def.transform(parsed.data, upstream) : upstream;
+        const { payload } = capPayload(transformed, { maxBytes: DEFAULT_MAX_BYTES });
         return {
           content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
           ...(isRecord(payload) ? { structuredContent: payload } : {}),

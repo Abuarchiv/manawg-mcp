@@ -1,3 +1,5 @@
+import type { PayloadLimits } from './payload.js';
+
 export type ResourceDef = {
   name: string;
   uri: string;
@@ -6,6 +8,7 @@ export type ResourceDef = {
   path: string[];
   query?: Record<string, string | number | boolean | undefined>;
   scope?: 'wg' | 'account';
+  limits?: PayloadLimits;
 };
 
 function resource(
@@ -15,6 +18,7 @@ function resource(
   path: string[],
   query?: Record<string, string | number | boolean | undefined>,
   scope?: 'wg' | 'account',
+  limits?: PayloadLimits,
 ): ResourceDef {
   const def: ResourceDef = { name, uri: `manawg://current/${name}`, title, description, path };
   if (query) {
@@ -22,6 +26,9 @@ function resource(
   }
   if (scope) {
     def.scope = scope;
+  }
+  if (limits) {
+    def.limits = limits;
   }
   return def;
 }
@@ -42,8 +49,11 @@ export const RESOURCE_DEFS: ResourceDef[] = [
   resource(
     'expenses',
     'Ausgaben und Splits',
-    'Alle Ausgaben mit Schuldnersplits und bereits erfolgten Zahlungen.',
+    'Neueste Ausgaben mit Schuldnersplits und Zahlungen; die Liste ist auf 100 Einträge begrenzt (_mcp.truncated), vollständig über expenses_list mit limit/offset.',
     ['expenses'],
+    undefined,
+    undefined,
+    { maxItems: 100, maxBytes: 40_000 },
   ),
   resource(
     'recurring',

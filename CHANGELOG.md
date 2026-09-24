@@ -45,8 +45,14 @@
 - Container image: multi-stage `Dockerfile` (pnpm build, prod-pruned `node_modules`, non-root user,
   `/data` caches, `HEALTHCHECK`), an image build plus HTTP smoke test as a second CI job, and a
   release workflow that pushes `ghcr.io/abuarchiv/manawg-mcp:<version>` on every `v*` tag.
+- Payload bounds for every read: resources and tool results are capped at 100 KB
+  (`src/payload.ts`, arrays shrink from the largest one), and the `expenses` resource keeps the
+  newest 100 entries — both announced through a `_mcp.truncated` marker instead of silent cuts.
 
 ### Changed
+
+- `expenses_list` accepts `limit` (1..500, default 100) and `offset`, slices the unpaginated
+  `/expenses` route MCP-side and returns `total`/`hasMore` next to the page.
 
 - `MANAWG_BASE_URL`, `MANAWG_WG_CODE` and the Supabase settings (`MANAWG_SUPABASE_URL`,
   `MANAWG_SUPABASE_PUBLISHABLE_KEY`, and either `MANAWG_SUPABASE_REFRESH_TOKEN` or

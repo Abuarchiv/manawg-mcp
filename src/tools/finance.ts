@@ -21,10 +21,31 @@ export const financeTools = [
     name: 'expenses_list',
     title: 'Ausgaben und Zahlungen lesen',
     description:
-      'Alle Ausgaben inklusive splits (debtorMemberId, amountCents, settledAt) sowie bereits abgeschlossene payments. Grundlage für offene Salden und settlement_preview.',
+      'Ausgaben nach occurredAt absteigend mit splits (debtorMemberId, amountCents, settledAt) sowie abgeschlossene payments. limit 1..500 (default 100) und offset blättern; Antwort enthält total und hasMore. Grundlage für offene Salden und settlement_preview.',
     method: 'GET',
-    input: z.strictObject({}),
+    input: z.strictObject({
+      limit: z.number().int().min(1).max(500).default(100),
+      offset: z.number().int().min(0).default(0),
+    }),
     path: () => ['expenses'],
+    transform: (input, payload) => {
+      const { limit, offset } = input as { limit: number; offset: number };
+      if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+        return payload;
+      }
+      const record = payload as Record<string, unknown>;
+      const all = Array.isArray(record.expenses) ? record.expenses : undefined;
+      if (!all) {
+        return payload;
+      }
+      const page = all.slice(offset, offset + limit);
+      return {
+        ...record,
+        expenses: page,
+        total: all.length,
+        hasMore: offset + page.length < all.length,
+      };
+    },
   }),
   defineTool({
     name: 'expense_create',

@@ -131,6 +131,11 @@ a `HEALTHCHECK` against `/health`. CI builds and smoke-tests the image on every 
 payload of the matching route, `mimeType: application/json`. `wg` is account-scoped (all households
 of the signed-in account, no WG code in the path).
 
+Reads are bounded so no resource floods the context: every payload is capped at 100 KB (arrays
+shrink from the largest one until it fits) and `expenses` additionally keeps only the newest 100
+entries. Truncation is never silent — the result carries `"_mcp": { "truncated": true, "fields":
+[…] }`, and full history is available through `expenses_list` with `limit`/`offset`.
+
 ### Resource templates (4)
 
 `manawg://current/{event|chore|member|recurring}/{id}` resolve one entity by UUID — the four

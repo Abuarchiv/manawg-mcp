@@ -432,3 +432,67 @@ it('exposes the documented prompts with their arguments', async () => {
   const reminderText = (reminder.messages[0]?.content as { type: 'text'; text: string }).text;
   expect(reminderText).toContain('reminder_send nicht aufrufen');
 });
+
+it('caps the expenses resource at 100 entries and announces truncation', async () => {
+  const expenses = Array.from({ length: 250 }, (_, i) => ({ id: `e${i}`, amountCents: i }));
+  const client = await connectTestServer(buildServer(fakeClient({ expenses, payments: [] })));
+
+  const result = await client.readResource({ uri: 'manawg://current/expenses' });
+  const payload = JSON.parse((result.contents[0] as { text: string }).text) as Record<
+    string,
+    unknown
+  >;
+
+  expect((payload.expenses as unknown[]).length).toBe(100);
+  expect(payload._mcp).toEqual({ truncated: true, fields: ['expenses'] });
+});
+
+it('leaves a small expenses resource untouched', async () => {
+  const payload = { expenses: [{ id: VALID_ID }], payments: [] };
+  const client = await connectTestServer(buildServer(fakeClient(payload)));
+
+  const result = await client.readResource({ uri: 'manawg://current/expenses' });
+
+  expect((result.contents[0] as { text: string }).text).toBe(JSON.stringify(payload));
+});
+
+it('pages expenses_list with limit, offset, total and hasMore', async () => {
+  const expenses = Array.from({ length: 150 }, (_, i) => ({ id: `e${i}` }));
+  const fake = fakeClient({ expenses, payments: [] });
+  const client = await connectTestServer(buildServer(fake));
+
+  const first = await client.callTool({ name: 'expenses_list', arguments: {} });
+  const firstPayload = first.structuredContent as {
+    expenses: unknown[];
+    total: number;
+    hasMore: boolean;
+  };
+  expect(firstPayload.expenses.length).toBe(100);
+  expect(firstPayload.total).toBe(150);
+  expect(firstPayload.hasMore).toBe(true);
+
+  const second = await client.callTool({
+    name: 'expenses_list',
+    arguments: { limit: 20, offset: 140 },
+  });
+  const secondPayload = second.structuredContent as {
+    expenses: Array<{ id: string }>;
+    total: number;
+    hasMore: boolean;
+  };
+  expect(secondPayload.expenses.map((expense) => expense.id)).toEqual([
+    'e140',
+    'e141',
+    'e142',
+    'e143',
+    'e144',
+    'e145',
+    'e146',
+    'e147',
+    'e148',
+    'e149',
+  ]);
+  expect(secondPayload.total).toBe(150);
+  expect(secondPayload.hasMore).toBe(false);
+  expect(fake.call).toHaveBeenLastCalledWith({ method: 'GET', path: ['expenses'] });
+});

@@ -16,6 +16,7 @@ export type ToolDef = {
   body?: (input: unknown) => unknown;
   gate?: ToolGate;
   scope?: 'wg' | 'account';
+  transform?: (input: unknown, payload: unknown) => unknown;
 };
 
 type ToolSpec<TInput extends z.ZodType> = {
@@ -29,6 +30,7 @@ type ToolSpec<TInput extends z.ZodType> = {
   body?: (input: z.output<TInput>) => unknown;
   gate?: ToolGate;
   scope?: 'wg' | 'account';
+  transform?: (input: z.output<TInput>, payload: unknown) => unknown;
 };
 
 export function defineTool<TInput extends z.ZodType>(spec: ToolSpec<TInput>): ToolDef {
@@ -51,6 +53,9 @@ export function defineTool<TInput extends z.ZodType>(spec: ToolSpec<TInput>): To
   }
   if (spec.scope) {
     def.scope = spec.scope;
+  }
+  if (spec.transform) {
+    def.transform = spec.transform as (input: unknown, payload: unknown) => unknown;
   }
   return def;
 }
