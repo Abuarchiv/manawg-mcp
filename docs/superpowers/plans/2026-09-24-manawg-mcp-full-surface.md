@@ -1,7 +1,7 @@
 # Plan — ManaWG MCP full surface (2026-09-24)
 
-Execution plan for spec `2026-09-24-manawg-mcp-full-surface`. Status: steps 1–8 done,
-step 9 pending real credentials.
+Execution plan for spec `2026-09-24-manawg-mcp-full-surface`. Status: all 9 steps done —
+`pnpm live-check` reports `live_check: OK` (2 reachability + 7 data probes, 2026-09-24).
 
 | # | Step | Verification |
 | --- | --- | --- |
@@ -13,7 +13,7 @@ step 9 pending real credentials.
 | 6 | Biome config + `pnpm lint` (0 diagnostics) | `biome check .` clean |
 | 7 | CI workflow, `.env.example`, `scripts/live-check.mjs` | workflow runs lint/typecheck/test/build; live-check fails safely without credentials |
 | 8 | README, CHANGELOG, spec + this plan | docs describe the shipped surface |
-| 9 | Fill `~/.config/manawg-mcp/env`, run `pnpm live-check` | all seven probes `ok`, `live_check: OK` |
+| 9 | Fill `~/.config/manawg-mcp/env`, run `pnpm live-check` | all nine probes `ok`, `live_check: OK` |
 
 ## Risks carried forward
 

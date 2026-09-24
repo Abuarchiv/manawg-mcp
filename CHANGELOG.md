@@ -32,6 +32,10 @@
 - `chore_complete` now takes `{ id }` instead of `{ choreId }`.
 - The HTTP client exposes a single generic `call({ path, method, query, body })` instead of
   one method per route.
+- Resource read failures now report the same allowlisted code, `retry_after_s` and truncated
+  `details` as tool failures instead of a bare `ManaWG request failed`.
+- The advertised server version comes from `package.json` instead of a second hard-coded copy.
+- A configuration error exits with a single `config_error: …` line instead of a stack trace.
 
 ### Fixed
 

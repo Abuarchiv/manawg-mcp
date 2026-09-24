@@ -6,7 +6,13 @@ import { createManaWgClient } from './manawg-client.js';
 import { buildServer } from './server.js';
 
 export function start() {
-  const config = loadConfig();
+  let config: ReturnType<typeof loadConfig>;
+  try {
+    config = loadConfig();
+  } catch (error) {
+    console.error(`config_error: ${error instanceof Error ? error.message : 'unknown'}`);
+    process.exit(1);
+  }
   const auth = createSessionController(config.auth);
   const client = createManaWgClient(config, fetch, auth);
   const handle = serveStdio(() =>

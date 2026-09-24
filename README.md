@@ -124,7 +124,7 @@ subscription endpoints, `test_notification`, joining/claiming members and WG del
 ```bash
 pnpm lint        # biome check
 pnpm typecheck   # tsc --noEmit
-pnpm test        # vitest (97 tests, no credentials needed)
+pnpm test        # vitest (99 tests, no credentials needed)
 pnpm build       # tsc to dist/
 pnpm smoke       # stdio handshake against dist/: tools, resources, destructive gate
 pnpm inspector   # MCP Inspector (web UI) against dist/index.js

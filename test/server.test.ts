@@ -313,3 +313,26 @@ it.each([
   expect(message).not.toContain(SECRET);
   expect(message).not.toContain('https://example.test');
 });
+
+it('reports the allowlisted code on resource failures like tools do', async () => {
+  const fake = fakeClient();
+  fake.call.mockRejectedValue(new ManaWgError('too_many_requests', 429, { retryAfterSeconds: 30 }));
+  const client = await connectTestServer(buildServer(fake));
+
+  const message = await rejectedMessage(client.readResource({ uri: 'manawg://current/expenses' }));
+
+  expect(message).toBe('ManaWG request failed: too_many_requests retry_after_s=30');
+});
+
+it('reports the package version as server version', async () => {
+  const client = await connectTestServer(buildServer(fakeClient()));
+
+  expect(client.getServerVersion()).toMatchObject({
+    name: 'manawg-mcp',
+    version: expect.any(String),
+  });
+  const pkg = (await import('../package.json', { with: { type: 'json' } })).default as {
+    version: string;
+  };
+  expect(client.getServerVersion()?.version).toBe(pkg.version);
+});

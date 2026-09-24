@@ -1,3 +1,4 @@
+import { createRequire } from 'node:module';
 import { McpServer } from '@modelcontextprotocol/server';
 import type { ManaWgClient, WgRequest } from './manawg-client.js';
 import { ManaWgError } from './manawg-client.js';
@@ -6,12 +7,22 @@ import { TOOL_DEFS, type ToolDef, selectTools } from './tools/registry.js';
 
 const SAFE_ERROR_MESSAGE = 'ManaWG request failed';
 
+function serverVersion(): string {
+  try {
+    const require = createRequire(import.meta.url);
+    const pkg = require('../package.json') as { version?: unknown };
+    return typeof pkg.version === 'string' ? pkg.version : '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+}
+
 export type ServerOptions = {
   allowDestructive?: boolean;
 };
 
 export function buildServer(client: ManaWgClient, options: ServerOptions = {}): McpServer {
-  const server = new McpServer({ name: 'manawg-mcp', version: '0.1.0' });
+  const server = new McpServer({ name: 'manawg-mcp', version: serverVersion() });
 
   for (const def of RESOURCE_DEFS) {
     registerResource(server, client, def);
@@ -41,8 +52,8 @@ function registerResource(server: McpServer, client: ManaWgClient, def: Resource
             { uri: uri.href, mimeType: 'application/json', text: JSON.stringify(payload) },
           ],
         };
-      } catch {
-        throw new Error(SAFE_ERROR_MESSAGE);
+      } catch (error) {
+        throw new Error(describeError(error));
       }
     },
   );
