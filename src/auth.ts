@@ -355,6 +355,11 @@ export function createSessionController(
     },
 
     invalidate(): void {
+      if (pending) {
+        // A refresh or sign-in is already running: wiping the session under it
+        // would discard its result and make the next caller sign in again.
+        return;
+      }
       session = undefined;
       loaded = true;
       persist(undefined);

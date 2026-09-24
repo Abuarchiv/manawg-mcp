@@ -224,7 +224,7 @@ it('trims all environment values before returning the configuration', () => {
     identityCachePath: DEFAULT_IDENTITY_CACHE_PATH,
     allowDestructive: true,
     transport: 'stdio',
-    http: { host: '127.0.0.1', port: 8080, path: '/mcp' },
+    http: { host: '127.0.0.1', port: 8080, path: '/mcp', cors: false, drainMs: 5000 },
   });
 });
 
@@ -232,7 +232,13 @@ it('defaults to the stdio transport on 127.0.0.1:8080/mcp', () => {
   const config = loadConfig(validEnv());
 
   expect(config.transport).toBe('stdio');
-  expect(config.http).toEqual({ host: '127.0.0.1', port: 8080, path: '/mcp' });
+  expect(config.http).toEqual({
+    host: '127.0.0.1',
+    port: 8080,
+    path: '/mcp',
+    cors: false,
+    drainMs: 5000,
+  });
   expect(config.http.apiKey).toBeUndefined();
 });
 
@@ -252,7 +258,27 @@ it('reads the http transport settings from the environment', () => {
     port: 9090,
     path: '/mcp/v2',
     apiKey: 'k'.repeat(32),
+    cors: false,
+    drainMs: 5000,
   });
+});
+
+it('reads the drain window and the CORS flag', () => {
+  const config = loadConfig({
+    ...validEnv(),
+    MANAWG_DRAIN_MS: ' 2500 ',
+    MANAWG_HTTP_CORS: ' yes ',
+  });
+
+  expect(config.http.drainMs).toBe(2500);
+  expect(config.http.cors).toBe(true);
+});
+
+it('keeps CORS and the drain window off by default', () => {
+  const config = loadConfig(validEnv());
+
+  expect(config.http.cors).toBe(false);
+  expect(config.http.drainMs).toBe(5000);
 });
 
 it('rejects an unknown transport name', () => {
@@ -269,6 +295,9 @@ it.each([
   ['MANAWG_HTTP_PATH', '/mcp/'],
   ['MANAWG_HTTP_HOST', '0.0.0.0/mcp'],
   ['MANAWG_HTTP_API_KEY', 'short'],
+  ['MANAWG_DRAIN_MS', '-1'],
+  ['MANAWG_DRAIN_MS', '5000.5'],
+  ['MANAWG_DRAIN_MS', '70000'],
 ])('rejects %s=%s', (name, value) => {
   const message = thrownMessage(() => loadConfig({ ...validEnv(), [name]: value }));
 

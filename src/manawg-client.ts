@@ -154,8 +154,18 @@ const SAFE_UPSTREAM_CODES = new Set([
 ]);
 
 const AUTH_RETRY_CODES = new Set(['auth_required', 'member_deactivated', 'not_a_member']);
-const RETRYABLE_WRITE_STATUS = new Set([502, 503, 504]);
 const DETAIL_SAFE_CODE = 'validation_errors';
+
+/** 429 plus the transient server failures worth another attempt. */
+const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
+const DEFAULT_RETRY_DELAYS_MS = [200, 800];
+/** Longer rate limits are surfaced instead of slept out inside a tool call. */
+const DEFAULT_MAX_AUTO_RETRY_DELAY_MS = 2_000;
+
+export type ClientRetryOptions = {
+  retryDelaysMs?: number[];
+  maxAutoRetryDelayMs?: number;
+};
 
 export class ManaWgError extends Error {
   readonly code: string;
@@ -209,7 +219,30 @@ export function createManaWgClient(
   config: AppConfig,
   fetchImpl: typeof fetch = fetch,
   auth?: SessionController,
+  retryOptions: ClientRetryOptions = {},
 ): ManaWgClient {
+  const retryDelaysMs = retryOptions.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
+  const maxAutoRetryDelayMs = retryOptions.maxAutoRetryDelayMs ?? DEFAULT_MAX_AUTO_RETRY_DELAY_MS;
+
+  function sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      const timer = setTimeout(resolve, ms);
+      timer.unref?.();
+    });
+  }
+
+  /** Milliseconds to wait before the next attempt, or undefined to give up. */
+  function nextDelay(response: Response, fallbackMs: number): number | undefined {
+    if (response.status === 429) {
+      const seconds = retryAfterSeconds(response);
+      const delay = seconds === undefined ? fallbackMs : seconds * 1000;
+      return delay <= maxAutoRetryDelayMs ? delay : undefined;
+    }
+    if (RETRYABLE_STATUS.has(response.status)) {
+      return fallbackMs;
+    }
+    return undefined;
+  }
   function buildUrl(request: WgRequest): string {
     const base = request.scope === 'account' ? [] : [config.wgCode];
     const segments = [...base, ...request.path].map((segment) => encodeURIComponent(segment));
@@ -260,7 +293,7 @@ export function createManaWgClient(
   }
 
   async function bootstrapIdentity(): Promise<MemberIdentity> {
-    const payload = (await decode(await perform({ path: [] }, undefined))) as
+    const payload = (await decode(await send({ path: [] }, undefined))) as
       | { currentMember?: { memberId?: unknown; memberToken?: unknown } }
       | undefined;
     const member = payload?.currentMember;
@@ -331,7 +364,11 @@ export function createManaWgClient(
       }
     }
     if (auth) {
-      headers.set('cookie', await auth.cookieHeader());
+      try {
+        headers.set('cookie', await auth.cookieHeader());
+      } catch {
+        throw new ManaWgError('auth_failed', 401);
+      }
     }
     if (request.body !== undefined) {
       headers.set('content-type', 'application/json');
@@ -436,16 +473,47 @@ export function createManaWgClient(
     throw new ManaWgError(code, response.status, options);
   }
 
+  /** One request with bounded retries: transient statuses, rate limits and network failures. */
+  async function send(
+    request: WgRequest,
+    identity: MemberIdentity | undefined,
+    idempotencyKey?: string,
+  ): Promise<Response> {
+    for (let attempt = 0; ; attempt++) {
+      let response: Response;
+      try {
+        response = await perform(request, identity, idempotencyKey);
+      } catch (error) {
+        const lastAttempt = attempt >= retryDelaysMs.length;
+        if (
+          lastAttempt ||
+          !(error instanceof ManaWgError) ||
+          error.code !== 'upstream_network_error'
+        ) {
+          throw error;
+        }
+        await sleep(retryDelaysMs[attempt]);
+        continue;
+      }
+
+      const delay =
+        attempt >= retryDelaysMs.length ? undefined : nextDelay(response, retryDelaysMs[attempt]);
+      if (delay === undefined) {
+        return response;
+      }
+      await response.body?.cancel().catch(() => undefined);
+      if (delay > 0) {
+        await sleep(delay);
+      }
+    }
+  }
+
   return {
     async call(request: WgRequest): Promise<unknown> {
       const resolvedIdentity = request.scope === 'account' ? undefined : await ensureIdentity();
       const isWrite = (request.method ?? 'GET') !== 'GET';
       const idempotencyKey = isWrite ? randomUUID() : undefined;
-      let response = await perform(request, resolvedIdentity, idempotencyKey);
-      if (isWrite && RETRYABLE_WRITE_STATUS.has(response.status)) {
-        response = await perform(request, resolvedIdentity, idempotencyKey);
-      }
-      return decode(response);
+      return decode(await send(request, resolvedIdentity, idempotencyKey));
     },
   };
 }

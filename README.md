@@ -48,6 +48,8 @@ Unit tests, lint and typecheck never need credentials.
 | `MANAWG_HTTP_PORT` | no | Port for `http` (default `8080`) |
 | `MANAWG_HTTP_PATH` | no | MCP endpoint path for `http` (default `/mcp`) |
 | `MANAWG_HTTP_API_KEY` | no | Bearer token guarding the MCP endpoint, minimum 16 characters |
+| `MANAWG_HTTP_CORS` | no | `1` allows any browser origin to call the endpoint (default off) |
+| `MANAWG_DRAIN_MS` | no | Milliseconds `/ready` reports `503` before shutdown (default 5000) |
 
 Only `MANAWG_WG_CODE` and one sign-in mode have to be filled in by hand.
 
@@ -97,8 +99,11 @@ node dist/index.js
   reachable by any client that supports the HTTP transport with the header
   `Authorization: Bearer <MANAWG_HTTP_API_KEY>`.
 - `GET /health` answers `{"status":"ok",…}` without credentials — the probe for load balancers and
-  the container `HEALTHCHECK`. Everything outside `/health` and the MCP path is `404`, an MCP
-  request without the bearer token is `401`.
+  the container `HEALTHCHECK`. `GET /ready` returns `200` while serving and `503` as soon as
+  `SIGTERM`/`SIGINT` arrives, for the `MANAWG_DRAIN_MS` window, then the listener closes. Everything
+  else is `404`; an MCP request without the bearer token is `401`.
+- Browser clients (MCP Inspector) need `MANAWG_HTTP_CORS=1` — it stays off so an unauthenticated
+  endpoint cannot be called from a foreign page.
 - Startup failures are a single `config_error: …` line and exit status 1, so a bad deployment
   fails fast instead of booting broken.
 
@@ -166,6 +171,11 @@ Input schemas mirror the API contract (money in `amountCents`, ISO datetimes wit
 counts, lengths). Every tool returns the route payload as text plus `structuredContent`.
 
 ## Error contract
+
+Transient failures are retried inside the server: up to two extra attempts (200 ms, 800 ms) for
+`429` with a short `Retry-After`, `5xx` and network errors, always with the same idempotency key on
+writes. Longer rate limits are not slept out — they surface immediately as
+`ManaWG request failed: too_many_requests retry_after_s=<n>`.
 
 Tool and resource failures never carry upstream messages, URLs or credentials:
 

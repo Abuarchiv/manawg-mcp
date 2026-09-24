@@ -28,7 +28,7 @@ const validConfig: AppConfig = {
   identityCachePath: '/tmp/manawg-mcp-test-identity.json',
   allowDestructive: false,
   transport: 'stdio',
-  http: { host: '127.0.0.1', port: 8080, path: '/mcp' },
+  http: { host: '127.0.0.1', port: 8080, path: '/mcp', cors: false, drainMs: 5000 },
 };
 
 const cleanup: Array<() => Promise<void>> = [];
@@ -151,7 +151,14 @@ it('rejects redirects before member headers can reach another origin', async () 
     response.end();
   });
 
-  const client = createManaWgClient({ ...validConfig, baseUrl: sourceBaseUrl });
+  const client = createManaWgClient(
+    { ...validConfig, baseUrl: sourceBaseUrl },
+    undefined,
+    undefined,
+    {
+      retryDelaysMs: [1, 1],
+    },
+  );
 
   expect(await errorCode(client.call({ path: ['dashboard'] }))).toBe('upstream_network_error');
   expect(targetHeaders).toBeUndefined();
@@ -204,7 +211,7 @@ it.each([502, 503, 504])(
       .fn<typeof fetch>()
       .mockResolvedValueOnce(jsonResponse({}, status))
       .mockResolvedValueOnce(jsonResponse({ item: { id: '1' } }));
-    const client = createManaWgClient(validConfig, fetchMock);
+    const client = createManaWgClient(validConfig, fetchMock, undefined, { retryDelaysMs: [1, 1] });
 
     await client.call({ path: ['shopping'], method: 'POST', body: { name: 'Milch' } });
 
@@ -215,12 +222,23 @@ it.each([502, 503, 504])(
   },
 );
 
-it('does not retry reads', async () => {
+it('retries reads on a transient status and fails after the attempts', async () => {
   const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({}, 503));
-  const client = createManaWgClient(validConfig, fetchMock);
+  const client = createManaWgClient(validConfig, fetchMock, undefined, { retryDelaysMs: [1, 1] });
 
   expect(await errorCode(client.call({ path: ['dashboard'] }))).toBe('internal_error');
-  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(fetchMock).toHaveBeenCalledTimes(3);
+});
+
+it('retries a read after a network failure and then succeeds', async () => {
+  const fetchMock = vi
+    .fn<typeof fetch>()
+    .mockRejectedValueOnce(new Error('socket hang up'))
+    .mockResolvedValueOnce(jsonResponse({ openShopping: [] }));
+  const client = createManaWgClient(validConfig, fetchMock, undefined, { retryDelaysMs: [1, 1] });
+
+  await expect(client.call({ path: ['dashboard'] })).resolves.toEqual({ openShopping: [] });
+  expect(fetchMock).toHaveBeenCalledTimes(2);
 });
 
 it.each([
@@ -229,7 +247,6 @@ it.each([
   [403, 'member_not_verified'],
   [404, 'wg_not_found'],
   [409, 'shopping_item_duplicate'],
-  [429, 'too_many_requests'],
 ] as const)('does not retry HTTP %i writes and returns the safe code', async (status, code) => {
   const fetchMock = vi
     .fn<typeof fetch>()
@@ -247,13 +264,33 @@ it.each([
   expect(String((thrown as ManaWgError).message)).not.toContain(validConfig.memberToken);
 });
 
+it('retries a rate-limited write with the same key and surfaces the safe code', async () => {
+  const fetchMock = vi
+    .fn<typeof fetch>()
+    .mockResolvedValue(jsonResponse({ code: 'too_many_requests' }, 429));
+  const client = createManaWgClient(validConfig, fetchMock, undefined, { retryDelaysMs: [1, 1] });
+
+  const thrown = await client
+    .call({ path: ['shopping'], method: 'POST', body: { name: 'Milch' } })
+    .then(() => undefined)
+    .catch((error: unknown) => error);
+
+  expect(fetchMock).toHaveBeenCalledTimes(3);
+  expect((thrown as ManaWgError).code).toBe('too_many_requests');
+  const keys = fetchMock.mock.calls.map((call) =>
+    (call[1]?.headers as Headers).get('idempotency-key'),
+  );
+  expect(new Set(keys).size).toBe(1);
+});
+
 it('falls back to the HTTP status when the upstream error has no stable code', async () => {
   const fetchMock = vi
     .fn<typeof fetch>()
     .mockResolvedValue(jsonResponse({ error: `secret:${validConfig.memberToken}` }, 500));
-  const client = createManaWgClient(validConfig, fetchMock);
+  const client = createManaWgClient(validConfig, fetchMock, undefined, { retryDelaysMs: [1, 1] });
 
   expect(await errorCode(client.call({ path: ['dashboard'] }))).toBe('internal_error');
+  expect(fetchMock).toHaveBeenCalledTimes(3);
 });
 
 it('falls back to the HTTP status when the upstream code is unknown or secret-bearing', async () => {
@@ -278,13 +315,14 @@ it('keeps retry-after seconds from rate limits', async () => {
     .mockResolvedValue(
       jsonResponse({ error: 'slow down', code: 'too_many_requests' }, 429, { 'retry-after': '17' }),
     );
-  const client = createManaWgClient(validConfig, fetchMock);
+  const client = createManaWgClient(validConfig, fetchMock, undefined, { retryDelaysMs: [1, 1] });
 
   const thrown = await client
     .call({ path: ['dashboard'] })
     .then(() => undefined)
     .catch((error: unknown) => error);
 
+  expect(fetchMock).toHaveBeenCalledTimes(1);
   expect(thrown).toBeInstanceOf(ManaWgError);
   expect((thrown as ManaWgError).retryAfterSeconds).toBe(17);
   expect((thrown as ManaWgError).details).toBeUndefined();
@@ -320,7 +358,7 @@ it('sanitizes response body read failures', async () => {
       return this;
     },
   } as unknown as Response);
-  const client = createManaWgClient(validConfig, fetchMock);
+  const client = createManaWgClient(validConfig, fetchMock, undefined, { retryDelaysMs: [1, 1] });
 
   expect(await errorCode(client.call({ path: ['dashboard'] }))).toBe('internal_error');
 });
@@ -329,7 +367,7 @@ it('sanitizes thrown transport errors', async () => {
   const fetchMock = vi
     .fn<typeof fetch>()
     .mockRejectedValue(new Error(`network:${validConfig.memberToken}`));
-  const client = createManaWgClient(validConfig, fetchMock);
+  const client = createManaWgClient(validConfig, fetchMock, undefined, { retryDelaysMs: [1, 1] });
 
   const code = await errorCode(client.call({ path: ['dashboard'] }));
 
@@ -489,7 +527,7 @@ it('keeps calling through a transient bootstrap failure and retries it next call
       }),
     )
     .mockResolvedValueOnce(jsonResponse({ openShopping: [] }));
-  const client = createManaWgClient(config, fetchMock);
+  const client = createManaWgClient(config, fetchMock, undefined, { retryDelaysMs: [] });
 
   await expect(client.call({ path: ['dashboard'] })).resolves.toEqual({ openShopping: [] });
   await expect(client.call({ path: ['dashboard'] })).resolves.toEqual({ openShopping: [] });
@@ -541,4 +579,28 @@ it('still sends the member headers on WG-scoped requests after an account call',
   expect(fetchMock.mock.calls[2]?.[0]).toBe('https://example.test/api/wg/WG123/dashboard');
   const headers = fetchMock.mock.calls[2]?.[1]?.headers as Headers;
   expect(headers.get('x-manawg-member-id')).toBe(BOOTSTRAP_MEMBER_ID);
+});
+
+it('waits out a short rate limit and succeeds on the next attempt', async () => {
+  const fetchMock = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(jsonResponse({ code: 'too_many_requests' }, 429, { 'retry-after': '0' }))
+    .mockResolvedValueOnce(jsonResponse({ openShopping: [] }));
+  const client = createManaWgClient(validConfig, fetchMock, undefined, { retryDelaysMs: [1, 1] });
+
+  await expect(client.call({ path: ['dashboard'] })).resolves.toEqual({ openShopping: [] });
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+});
+
+it('maps a failing session sign-in to the safe auth_failed code', async () => {
+  const auth = {
+    cookieHeader: vi.fn().mockRejectedValue(new Error('auth_failed')),
+    ingest: vi.fn().mockResolvedValue(undefined),
+    invalidate: vi.fn(),
+  };
+  const fetchMock = vi.fn<typeof fetch>();
+  const client = createManaWgClient(validConfig, fetchMock, auth);
+
+  expect(await errorCode(client.call({ path: ['dashboard'] }))).toBe('auth_failed');
+  expect(fetchMock).not.toHaveBeenCalled();
 });

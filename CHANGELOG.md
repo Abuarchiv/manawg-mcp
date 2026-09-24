@@ -34,6 +34,14 @@
 - Streamable HTTP transport (`MANAWG_TRANSPORT=http`) next to stdio: `createMcpHandler` served
   from `node:http`, an unauthenticated `GET /health` probe for orchestrators, an optional
   `MANAWG_HTTP_API_KEY` bearer gate on the MCP path, and `404` everywhere else.
+- Retry policy in the HTTP client: up to two extra attempts (200 ms, 800 ms) for `429` with a
+  short `Retry-After`, `500`/`502`/`503`/`504` and network failures, reusing the idempotency key on
+  writes; rate limits beyond the window still surface `retry_after_s`.
+- Readiness endpoint `GET /ready` plus graceful shutdown: `SIGTERM`/`SIGINT` flips it to `503` for
+  `MANAWG_DRAIN_MS`, then the listener and open streams close; inbound `headersTimeout` (15 s) and
+  `requestTimeout` (60 s) are set explicitly.
+- `MANAWG_HTTP_CORS` (default off) for browser clients and a single-flight fix so a concurrent
+  `invalidate()` cannot discard a sign-in that is already in flight.
 - Container image: multi-stage `Dockerfile` (pnpm build, prod-pruned `node_modules`, non-root user,
   `/data` caches, `HEALTHCHECK`), an image build plus HTTP smoke test as a second CI job, and a
   release workflow that pushes `ghcr.io/abuarchiv/manawg-mcp:<version>` on every `v*` tag.

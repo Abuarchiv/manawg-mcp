@@ -30,6 +30,8 @@ export type HttpTransportConfig = {
   port: number;
   path: string;
   apiKey?: string;
+  cors: boolean;
+  drainMs: number;
 };
 
 export type AppConfig = {
@@ -137,7 +139,13 @@ function allowDestructive(env: NodeJS.ProcessEnv): boolean {
   return value !== undefined && TRUTHY_VALUES.has(value);
 }
 
-const DEFAULT_HTTP: HttpTransportConfig = { host: '127.0.0.1', port: 8080, path: '/mcp' };
+const DEFAULT_HTTP: HttpTransportConfig = {
+  host: '127.0.0.1',
+  port: 8080,
+  path: '/mcp',
+  cors: false,
+  drainMs: 5_000,
+};
 
 function transport(env: NodeJS.ProcessEnv): TransportName {
   const value = env.MANAWG_TRANSPORT?.trim().toLowerCase();
@@ -175,7 +183,28 @@ function httpTransport(env: NodeJS.ProcessEnv): HttpTransportConfig {
     throw new Error('MANAWG_HTTP_API_KEY must be at least 16 characters long');
   }
 
-  return { host, port, path, ...(apiKey ? { apiKey } : {}) };
+  const drainRaw = env.MANAWG_DRAIN_MS?.trim();
+  let drainMs = DEFAULT_HTTP.drainMs;
+  if (drainRaw) {
+    drainMs = Number.parseInt(drainRaw, 10);
+    if (
+      !Number.isInteger(drainMs) ||
+      drainMs < 0 ||
+      drainMs > 60_000 ||
+      String(drainMs) !== drainRaw
+    ) {
+      throw new Error('MANAWG_DRAIN_MS must be an integer between 0 and 60000');
+    }
+  }
+
+  return {
+    host,
+    port,
+    path,
+    cors: TRUTHY_VALUES.has(env.MANAWG_HTTP_CORS?.trim().toLowerCase() ?? ''),
+    drainMs,
+    ...(apiKey ? { apiKey } : {}),
+  };
 }
 
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {

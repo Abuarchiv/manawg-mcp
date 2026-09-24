@@ -21,6 +21,7 @@ async function startHttp(options: Partial<HttpServerOptions> = {}): Promise<Runn
     host: '127.0.0.1',
     port: 0,
     path: '/mcp',
+    drainMs: 0,
     createServer: () => buildServer(fakeClient()),
     ...options,
   });
@@ -137,4 +138,40 @@ it('reports the mcp endpoint in the health payload', async () => {
 
   expect(payload.mcpPath).toBe('/mcp');
   expect(payload.version).toMatch(/^\d+\.\d+\.\d+/);
+});
+
+it('reports /ready as 200 before and 503 while draining', async () => {
+  const running = await startHttp({ drainMs: 500 });
+
+  const before = await fetch(`${originOf(running)}/ready`);
+  expect(before.status).toBe(200);
+
+  const draining = running.beginShutdown();
+  const during = await fetch(`${originOf(running)}/ready`);
+  expect(during.status).toBe(503);
+  await expect(during.json()).resolves.toEqual({ ready: false });
+
+  await draining;
+});
+
+it('adds CORS headers only when enabled', async () => {
+  const withCors = await startHttp({ cors: true });
+  const origin = originOf(withCors);
+
+  const preflight = await fetch(`${origin}/mcp`, {
+    method: 'OPTIONS',
+    headers: { origin: 'https://inspector.example', 'access-control-request-method': 'POST' },
+  });
+  expect(preflight.status).toBe(204);
+  expect(preflight.headers.get('access-control-allow-origin')).toBe('*');
+  expect(preflight.headers.get('access-control-allow-headers')).toContain('authorization');
+
+  const health = await fetch(`${origin}/health`, {
+    headers: { origin: 'https://inspector.example' },
+  });
+  expect(health.headers.get('access-control-allow-origin')).toBe('*');
+
+  const withoutCors = await startHttp();
+  const plain = await fetch(`${originOf(withoutCors)}/health`);
+  expect(plain.headers.get('access-control-allow-origin')).toBeNull();
 });

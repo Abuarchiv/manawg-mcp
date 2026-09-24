@@ -298,3 +298,30 @@ it('drops the cached session on invalidate and re-authenticates', async () => {
   expect(fetchMock).toHaveBeenCalledTimes(1);
   expect(decodeCookieHeader(header)).toContain('at-second');
 });
+
+it('ignores invalidate while a sign-in is already in flight', async () => {
+  const path = cachePath();
+  let release: ((response: Response) => void) | undefined;
+  fetchMock.mockImplementationOnce(
+    () =>
+      new Promise<Response>((resolve) => {
+        release = resolve;
+      }),
+  );
+  const controller = createSessionController(authConfig({ sessionCachePath: path }), fetchMock);
+
+  const first = controller.cookieHeader();
+  await Promise.resolve();
+  controller.invalidate();
+  const second = controller.cookieHeader();
+
+  if (!release) {
+    throw new Error('Expected the sign-in request to be in flight');
+  }
+  release(grantResponse(freshSession()));
+  const headers = await Promise.all([first, second]);
+
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(headers[0]).toBe(headers[1]);
+  expect(existsSync(path)).toBe(true);
+});
