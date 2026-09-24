@@ -142,7 +142,7 @@ function registerTool(server: McpServer, client: ManaWgClient, def: ToolDef): vo
       description: def.description,
       inputSchema: def.input,
       annotations: {
-        readOnlyHint: def.method === 'GET',
+        readOnlyHint: def.readOnly ?? def.method === 'GET',
         destructiveHint: def.gate === 'destructive',
         idempotentHint: def.method === 'GET',
       },

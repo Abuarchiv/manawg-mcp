@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const serverPath = join(here, '..', 'dist', 'index.js');
 
-const EXPECTED_TOOLS = 54;
+const EXPECTED_TOOLS = 56;
 const EXPECTED_RESOURCES = 13;
 const EXPECTED_TEMPLATES = 4;
 const EXPECTED_PROMPTS = 4;

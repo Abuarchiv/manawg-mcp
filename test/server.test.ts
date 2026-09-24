@@ -496,3 +496,76 @@ it('pages expenses_list with limit, offset, total and hasMore', async () => {
   expect(secondPayload.hasMore).toBe(false);
   expect(fake.call).toHaveBeenLastCalledWith({ method: 'GET', path: ['expenses'] });
 });
+
+it('registers the coverage tools with the right annotations and gates', async () => {
+  const client = await connectTestServer(buildServer(fakeClient(), { allowDestructive: true }));
+  const tools = (await client.listTools()).tools;
+  const byName = new Map(tools.map((tool) => [tool.name, tool]));
+
+  expect(byName.has('import_preview')).toBe(true);
+  expect(byName.has('import_commit')).toBe(true);
+  expect(byName.has('paypal_order_create')).toBe(true);
+  expect(byName.has('paypal_capture')).toBe(true);
+  expect(byName.has('member_claim')).toBe(true);
+  expect(byName.has('wg_create')).toBe(true);
+  expect(byName.has('calendar_subscription_get')).toBe(true);
+
+  expect(byName.get('import_preview')?.annotations).toMatchObject({
+    readOnlyHint: true,
+    destructiveHint: false,
+  });
+  expect(byName.get('calendar_subscription_get')?.annotations?.readOnlyHint).toBe(true);
+  for (const name of [
+    'import_commit',
+    'paypal_order_create',
+    'paypal_capture',
+    'member_claim',
+    'wg_create',
+  ]) {
+    expect(byName.get(name)?.annotations).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+    });
+  }
+});
+
+it('routes coverage tools per scope with their bodies', async () => {
+  const fake = fakeClient();
+  const client = await connectTestServer(buildServer(fake, { allowDestructive: true }));
+
+  await client.callTool({
+    name: 'import_preview',
+    arguments: { source: 'splitwise_csv', payload: 'Date,Betrag' },
+  });
+  expect(fake.call).toHaveBeenLastCalledWith({
+    method: 'POST',
+    path: ['imports', 'preview'],
+    body: { source: 'splitwise_csv', payload: 'Date,Betrag' },
+  });
+
+  await client.callTool({
+    name: 'member_claim',
+    arguments: { id: VALID_ID },
+  });
+  expect(fake.call).toHaveBeenLastCalledWith({
+    method: 'POST',
+    path: ['members', VALID_ID, 'claim'],
+  });
+
+  await client.callTool({
+    name: 'wg_create',
+    arguments: { name: 'Zweite WG', creatorName: 'Ada' },
+  });
+  expect(fake.call).toHaveBeenLastCalledWith({
+    method: 'POST',
+    path: ['wg'],
+    scope: 'account',
+    body: { name: 'Zweite WG', creatorName: 'Ada' },
+  });
+
+  await client.callTool({ name: 'calendar_subscription_get', arguments: {} });
+  expect(fake.call).toHaveBeenLastCalledWith({
+    method: 'GET',
+    path: ['calendar-subscription'],
+  });
+});

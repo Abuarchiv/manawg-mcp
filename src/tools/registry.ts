@@ -2,6 +2,7 @@ import { calendarTools } from './calendar.js';
 import { chatTools } from './chat.js';
 import { choreTools } from './chores.js';
 import { financeTools } from './finance.js';
+import { householdTools } from './household.js';
 import { inventoryTools } from './inventory.js';
 import { memberTools } from './members.js';
 import { noteTools } from './notes.js';
@@ -23,4 +24,5 @@ export const TOOL_DEFS: ToolDef[] = [
   ...chatTools,
   ...calendarTools,
   ...memberTools,
+  ...householdTools,
 ];

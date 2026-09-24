@@ -1,7 +1,7 @@
 # manawg-mcp
 
 MCP server for a [ManaWG](https://github.com/Abuarchiv/manawg-app) household. Node 22, stdio or
-streamable HTTP transport, 68 tools, 13 resources, 4 resource templates and 4 prompts over the
+streamable HTTP transport, 75 tools, 13 resources, 4 resource templates and 4 prompts over the
 same HTTP API the web app uses.
 
 ## Setup
@@ -154,7 +154,7 @@ app has no single-entity `GET` for it.
 Prompts return instructions plus tool names; the destructive steps stay gated behind an explicit
 confirmation.
 
-## Tools (68)
+## Tools (75)
 
 | Domain | Tools |
 | --- | --- |
@@ -168,9 +168,13 @@ confirmation.
 | Chat | `chat_messages`, `chat_send`, `chat_edit`, `chat_react`, `chat_mark_read`, `chat_unread`, `chat_delete`† |
 | Calendar | `events_list`, `event_get`, `event_create`, `event_update`, `event_delete`†, `absences_list`, `absence_create`, `absence_delete`† |
 | Members | `members_list`, `member_get`, `member_update`†, `notifications_get`, `notifications_update`, `wg_update`† |
+| Imports | `import_preview`, `import_commit`† |
+| PayPal | `paypal_order_create`†, `paypal_capture`† |
+| Account | `calendar_subscription_get`, `member_claim`†, `wg_create`† |
 
-† destructive: only registered when `MANAWG_ALLOW_DESTRUCTIVE=1` (14 tools), and annotated with
-`destructiveHint`. Read tools are annotated `readOnlyHint`.
+† destructive: only registered when `MANAWG_ALLOW_DESTRUCTIVE=1` (19 tools), and annotated with
+`destructiveHint`. GET tools and the side-effect-free `import_preview` POST are annotated
+`readOnlyHint`.
 
 Input schemas mirror the API contract (money in `amountCents`, ISO datetimes with offset, split
 counts, lengths). Every tool returns the route payload as text plus `structuredContent`.
