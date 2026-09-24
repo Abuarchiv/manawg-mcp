@@ -223,5 +223,55 @@ it('trims all environment values before returning the configuration', () => {
     },
     identityCachePath: DEFAULT_IDENTITY_CACHE_PATH,
     allowDestructive: true,
+    transport: 'stdio',
+    http: { host: '127.0.0.1', port: 8080, path: '/mcp' },
   });
+});
+
+it('defaults to the stdio transport on 127.0.0.1:8080/mcp', () => {
+  const config = loadConfig(validEnv());
+
+  expect(config.transport).toBe('stdio');
+  expect(config.http).toEqual({ host: '127.0.0.1', port: 8080, path: '/mcp' });
+  expect(config.http.apiKey).toBeUndefined();
+});
+
+it('reads the http transport settings from the environment', () => {
+  const config = loadConfig({
+    ...validEnv(),
+    MANAWG_TRANSPORT: 'HTTP',
+    MANAWG_HTTP_HOST: ' 0.0.0.0 ',
+    MANAWG_HTTP_PORT: ' 9090 ',
+    MANAWG_HTTP_PATH: ' /mcp/v2 ',
+    MANAWG_HTTP_API_KEY: 'k'.repeat(32),
+  });
+
+  expect(config.transport).toBe('http');
+  expect(config.http).toEqual({
+    host: '0.0.0.0',
+    port: 9090,
+    path: '/mcp/v2',
+    apiKey: 'k'.repeat(32),
+  });
+});
+
+it('rejects an unknown transport name', () => {
+  expect(thrownMessage(() => loadConfig({ ...validEnv(), MANAWG_TRANSPORT: 'grpc' }))).toContain(
+    'MANAWG_TRANSPORT',
+  );
+});
+
+it.each([
+  ['MANAWG_HTTP_PORT', '0'],
+  ['MANAWG_HTTP_PORT', 'not-a-port'],
+  ['MANAWG_HTTP_PORT', '70000'],
+  ['MANAWG_HTTP_PATH', 'mcp'],
+  ['MANAWG_HTTP_PATH', '/mcp/'],
+  ['MANAWG_HTTP_HOST', '0.0.0.0/mcp'],
+  ['MANAWG_HTTP_API_KEY', 'short'],
+])('rejects %s=%s', (name, value) => {
+  const message = thrownMessage(() => loadConfig({ ...validEnv(), [name]: value }));
+
+  expect(message).toContain(name);
+  expect(message).not.toContain(value);
 });

@@ -22,6 +22,21 @@
   optional overrides.
 - `pnpm smoke` (credential-free stdio handshake against `dist/`) and `pnpm inspector`
   (MCP Inspector against `dist/index.js`).
+- Three gap-closing reads: `note_comments` (announcement comment thread), `recurring_advance`
+  (advance preview via `PATCH /recurring-expenses`) and the account-scoped `wg_list`
+  (every household of the signed-in account) — 68 tools now, 54 registered by default.
+- Account scope for the HTTP client: `scope: 'account'` skips the WG code in the path and the
+  identity bootstrap, and backs the new `manawg://current/wg` resource (13 resources).
+- Four entity resource templates, `manawg://current/{event|chore|member|recurring}/{id}`, for the
+  routes that answer `GET` on their own.
+- Four prompts: `daily_brief`, `shopping_run`, `payment_reminder` and `settlement_plan` — all of
+  them read-only instructions that name the tools to call and refuse the destructive step.
+- Streamable HTTP transport (`MANAWG_TRANSPORT=http`) next to stdio: `createMcpHandler` served
+  from `node:http`, an unauthenticated `GET /health` probe for orchestrators, an optional
+  `MANAWG_HTTP_API_KEY` bearer gate on the MCP path, and `404` everywhere else.
+- Container image: multi-stage `Dockerfile` (pnpm build, prod-pruned `node_modules`, non-root user,
+  `/data` caches, `HEALTHCHECK`), an image build plus HTTP smoke test as a second CI job, and a
+  release workflow that pushes `ghcr.io/abuarchiv/manawg-mcp:<version>` on every `v*` tag.
 
 ### Changed
 

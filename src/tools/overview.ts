@@ -3,6 +3,16 @@ import { defineTool } from './types.js';
 
 export const overviewTools = [
   defineTool({
+    name: 'wg_list',
+    title: 'Eigene WGs auflisten',
+    description:
+      'Alle WGs des angemeldeten Accounts mit name, code (Share-Code) und memberId — unabhängig von MANAWG_WG_CODE, damit ein Wechsel oder eine Wiederherstellung ohne lokalen Stand möglich ist.',
+    method: 'GET',
+    input: z.strictObject({}),
+    path: () => ['mine'],
+    scope: 'account',
+  }),
+  defineTool({
     name: 'wg_overview',
     title: 'WG-Übersicht',
     description:

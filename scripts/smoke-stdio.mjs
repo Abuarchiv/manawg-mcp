@@ -11,8 +11,10 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const serverPath = join(here, '..', 'dist', 'index.js');
 
-const EXPECTED_TOOLS = 51;
-const EXPECTED_RESOURCES = 12;
+const EXPECTED_TOOLS = 54;
+const EXPECTED_RESOURCES = 13;
+const EXPECTED_TEMPLATES = 4;
+const EXPECTED_PROMPTS = 4;
 
 function placeholderEnv() {
   return {
@@ -128,6 +130,7 @@ send({ jsonrpc: '2.0', method: 'notifications/initialized' });
 
 const tools = await request(2, 'tools/list');
 const resources = await request(3, 'resources/list');
+const templates = await request(5, 'resources/templates/list');
 let promptCount = 0;
 try {
   const prompts = await request(4, 'prompts/list');
@@ -159,12 +162,19 @@ if (destructive.length !== 0) {
 if ((resources.resources ?? []).length !== EXPECTED_RESOURCES) {
   fail(`expected ${EXPECTED_RESOURCES} resources, got ${(resources.resources ?? []).length}`);
 }
-if (promptCount !== 0) {
-  fail(`unexpected prompts registered: ${promptCount}`);
+if ((templates.resourceTemplates ?? []).length !== EXPECTED_TEMPLATES) {
+  fail(
+    `expected ${EXPECTED_TEMPLATES} resource templates, got ${(templates.resourceTemplates ?? []).length}`,
+  );
+}
+if (promptCount !== EXPECTED_PROMPTS) {
+  fail(`expected ${EXPECTED_PROMPTS} prompts, got ${promptCount}`);
 }
 
 console.error(`tools: ok count=${toolNames.length} gated_destructive=absent`);
 console.error(`resources: ok count=${(resources.resources ?? []).length}`);
+console.error(`templates: ok count=${(templates.resourceTemplates ?? []).length}`);
+console.error(`prompts: ok count=${promptCount}`);
 console.error('smoke: OK');
 child.kill();
 process.exit(0);

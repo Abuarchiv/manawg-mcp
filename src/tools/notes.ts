@@ -17,6 +17,15 @@ export const noteTools = [
     path: () => ['announcements'],
   }),
   defineTool({
+    name: 'note_comments',
+    title: 'Kommentare einer Ankündigung lesen',
+    description:
+      'Alle Kommentare einer Ankündigung (max 300) in chronologischer Reihenfolge mit authorName, authorColor und createdAt. 404 announcement_not_found bei unbekannter id.',
+    method: 'GET',
+    input: z.strictObject({ id: uuid }),
+    path: (input) => ['announcements', input.id, 'comments'],
+  }),
+  defineTool({
     name: 'note_create',
     title: 'Ankündigung verfassen',
     description:

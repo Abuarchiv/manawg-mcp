@@ -1,13 +1,19 @@
 import { createRequire } from 'node:module';
-import { McpServer } from '@modelcontextprotocol/server';
+import { McpServer, ResourceTemplate } from '@modelcontextprotocol/server';
 import type { ManaWgClient, WgRequest } from './manawg-client.js';
 import { ManaWgError } from './manawg-client.js';
-import { RESOURCE_DEFS, type ResourceDef } from './resources.js';
+import { PROMPT_DEFS } from './prompts.js';
+import {
+  RESOURCE_DEFS,
+  RESOURCE_TEMPLATE_DEFS,
+  type ResourceDef,
+  type ResourceTemplateDef,
+} from './resources.js';
 import { TOOL_DEFS, type ToolDef, selectTools } from './tools/registry.js';
 
 const SAFE_ERROR_MESSAGE = 'ManaWG request failed';
 
-function serverVersion(): string {
+export function serverVersion(): string {
   try {
     const require = createRequire(import.meta.url);
     const pkg = require('../package.json') as { version?: unknown };
@@ -28,11 +34,67 @@ export function buildServer(client: ManaWgClient, options: ServerOptions = {}): 
     registerResource(server, client, def);
   }
 
+  for (const def of RESOURCE_TEMPLATE_DEFS) {
+    registerEntityResource(server, client, def);
+  }
+
+  for (const def of PROMPT_DEFS) {
+    registerPrompt(server, def);
+  }
+
   for (const def of selectTools(TOOL_DEFS, options.allowDestructive ?? false)) {
     registerTool(server, client, def);
   }
 
   return server;
+}
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function registerEntityResource(
+  server: McpServer,
+  client: ManaWgClient,
+  def: ResourceTemplateDef,
+): void {
+  server.registerResource(
+    def.name,
+    new ResourceTemplate(def.uriTemplate, { list: undefined }),
+    { title: def.title, description: def.description, mimeType: 'application/json' },
+    async (uri, variables) => {
+      const id = variables.id;
+      if (typeof id !== 'string' || !UUID_PATTERN.test(id)) {
+        throw new Error(SAFE_ERROR_MESSAGE);
+      }
+      try {
+        const payload = await client.call({ method: 'GET', path: def.path(id) });
+        return {
+          contents: [
+            { uri: uri.href, mimeType: 'application/json', text: JSON.stringify(payload) },
+          ],
+        };
+      } catch (error) {
+        throw new Error(describeError(error));
+      }
+    },
+  );
+}
+
+function registerPrompt(server: McpServer, def: (typeof PROMPT_DEFS)[number]): void {
+  server.registerPrompt(
+    def.name,
+    { title: def.title, description: def.description, argsSchema: def.args },
+    (args) => ({
+      messages: [
+        {
+          role: 'user' as const,
+          content: {
+            type: 'text' as const,
+            text: def.render((args ?? {}) as Record<string, string | undefined>),
+          },
+        },
+      ],
+    }),
+  );
 }
 
 function registerResource(server: McpServer, client: ManaWgClient, def: ResourceDef): void {
@@ -42,6 +104,9 @@ function registerResource(server: McpServer, client: ManaWgClient, def: Resource
     { title: def.title, description: def.description, mimeType: 'application/json' },
     async (uri) => {
       const request: WgRequest = { method: 'GET', path: def.path };
+      if (def.scope) {
+        request.scope = def.scope;
+      }
       if (def.query) {
         request.query = def.query;
       }
@@ -79,6 +144,9 @@ function registerTool(server: McpServer, client: ManaWgClient, def: ToolDef): vo
       }
 
       const request: WgRequest = { method: def.method, path: def.path(parsed.data) };
+      if (def.scope) {
+        request.scope = def.scope;
+      }
       if (def.query) {
         request.query = def.query(parsed.data);
       }

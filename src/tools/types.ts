@@ -15,6 +15,7 @@ export type ToolDef = {
   query?: (input: unknown) => QueryParams;
   body?: (input: unknown) => unknown;
   gate?: ToolGate;
+  scope?: 'wg' | 'account';
 };
 
 type ToolSpec<TInput extends z.ZodType> = {
@@ -27,6 +28,7 @@ type ToolSpec<TInput extends z.ZodType> = {
   query?: (input: z.output<TInput>) => QueryParams;
   body?: (input: z.output<TInput>) => unknown;
   gate?: ToolGate;
+  scope?: 'wg' | 'account';
 };
 
 export function defineTool<TInput extends z.ZodType>(spec: ToolSpec<TInput>): ToolDef {
@@ -46,6 +48,9 @@ export function defineTool<TInput extends z.ZodType>(spec: ToolSpec<TInput>): To
   }
   if (spec.gate) {
     def.gate = spec.gate;
+  }
+  if (spec.scope) {
+    def.scope = spec.scope;
   }
   return def;
 }

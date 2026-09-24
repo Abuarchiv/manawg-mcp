@@ -62,6 +62,26 @@ export const recurringTools = [
     },
   }),
   defineTool({
+    name: 'recurring_advance',
+    title: 'Fixkosten jetzt fortschreiben',
+    description:
+      'Erzeugt sofort eine Ausgabe aus dem Template und rückt nextDueAt um intervalMonths weiter; alle Felder sind optionale Überschreibungen. Nur Ersteller oder Admin (not_owner). expectedNextDueAt dient als Optimistic-Lock: 409 recurring_expense_already_advanced, wenn dieser Zyklus bereits fortgeschrieben wurde.',
+    method: 'PATCH',
+    input: z.strictObject({
+      id: uuid,
+      expectedNextDueAt: isoDateTime.optional(),
+      description: description.optional(),
+      amountCents: amountCents.optional(),
+      currency: z.enum(['EUR', 'CHF', 'USD', 'GBP']).optional(),
+      paidByMemberId: uuid.optional(),
+      intervalMonths: z.number().int().min(1).max(24).optional(),
+      nextDueAt: isoDateTime.optional(),
+      splits: z.array(splitSchema).min(1).max(50).optional(),
+    }),
+    path: () => ['recurring-expenses'],
+    body: (input) => input,
+  }),
+  defineTool({
     name: 'recurring_delete',
     title: 'Fixkosten löschen',
     description:

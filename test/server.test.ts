@@ -99,6 +99,7 @@ it('exposes exactly the documented resource set', async () => {
     'manawg://current/events',
     'manawg://current/absences',
     'manawg://current/activity',
+    'manawg://current/wg',
   ]);
 });
 
@@ -335,4 +336,99 @@ it('reports the package version as server version', async () => {
     version: string;
   };
   expect(client.getServerVersion()?.version).toBe(pkg.version);
+});
+
+it('routes the new read tools to their routes', async () => {
+  const fake = fakeClient({ ok: true });
+  const client = await connectTestServer(buildServer(fake));
+
+  await client.callTool({ name: 'note_comments', arguments: { id: VALID_ID } });
+  expect(fake.call).toHaveBeenLastCalledWith({
+    method: 'GET',
+    path: ['announcements', VALID_ID, 'comments'],
+  });
+
+  await client.callTool({ name: 'wg_list', arguments: {} });
+  expect(fake.call).toHaveBeenLastCalledWith({
+    method: 'GET',
+    path: ['mine'],
+    scope: 'account',
+  });
+
+  await client.callTool({
+    name: 'recurring_advance',
+    arguments: { id: VALID_ID, amountCents: 1200 },
+  });
+  expect(fake.call).toHaveBeenLastCalledWith({
+    method: 'PATCH',
+    path: ['recurring-expenses'],
+    body: { id: VALID_ID, amountCents: 1200 },
+  });
+});
+
+it('reads the account-scoped wg resource', async () => {
+  const fake = fakeClient({ wgs: [{ name: 'WG', code: 'K3P0AAAA' }] });
+  const client = await connectTestServer(buildServer(fake));
+
+  const result = await client.readResource({ uri: 'manawg://current/wg' });
+
+  expect(fake.call).toHaveBeenCalledWith({ method: 'GET', path: ['mine'], scope: 'account' });
+  expect((result.contents[0] as { text: string }).text).toBe(
+    JSON.stringify({ wgs: [{ name: 'WG', code: 'K3P0AAAA' }] }),
+  );
+});
+
+it('lists the entity resource templates and reads one', async () => {
+  const fake = fakeClient({ event: { id: VALID_ID } });
+  const client = await connectTestServer(buildServer(fake));
+
+  const templates = (await client.listResourceTemplates()).resourceTemplates;
+  expect(templates.map((template) => template.uriTemplate)).toEqual([
+    'manawg://current/event/{id}',
+    'manawg://current/chore/{id}',
+    'manawg://current/member/{id}',
+    'manawg://current/recurring/{id}',
+  ]);
+
+  const result = await client.readResource({ uri: `manawg://current/event/${VALID_ID}` });
+  expect(fake.call).toHaveBeenCalledWith({ method: 'GET', path: ['events', VALID_ID] });
+  expect((result.contents[0] as { text: string }).text).toBe(
+    JSON.stringify({ event: { id: VALID_ID } }),
+  );
+});
+
+it('refuses entity resources with a non-uuid id before calling upstream', async () => {
+  const fake = fakeClient();
+  const client = await connectTestServer(buildServer(fake));
+
+  const message = await rejectedMessage(
+    client.readResource({ uri: 'manawg://current/event/not-a-uuid' }),
+  );
+
+  expect(message).toContain('ManaWG request failed');
+  expect(fake.call).not.toHaveBeenCalled();
+});
+
+it('exposes the documented prompts with their arguments', async () => {
+  const client = await connectTestServer(buildServer(fakeClient()));
+
+  const prompts = (await client.listPrompts()).prompts;
+  expect(prompts.map((prompt) => prompt.name)).toEqual([
+    'daily_brief',
+    'shopping_run',
+    'payment_reminder',
+    'settlement_plan',
+  ]);
+  for (const prompt of prompts) {
+    expect(prompt.description).toBeTruthy();
+  }
+
+  const brief = await client.getPrompt({ name: 'daily_brief', arguments: { fokus: 'Küche' } });
+  const text = (brief.messages[0]?.content as { type: 'text'; text: string }).text;
+  expect(text).toContain('dashboard_get');
+  expect(text).toContain('Küche');
+
+  const reminder = await client.getPrompt({ name: 'payment_reminder', arguments: {} });
+  const reminderText = (reminder.messages[0]?.content as { type: 'text'; text: string }).text;
+  expect(reminderText).toContain('reminder_send nicht aufrufen');
 });

@@ -1,0 +1,13 @@
+.git
+.github
+node_modules
+dist
+docs
+test
+scripts
+.superpowers
+*.md
+.env*
+.env.example
+Dockerfile
+.dockerignore

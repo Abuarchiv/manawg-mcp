@@ -27,6 +27,8 @@ const validConfig: AppConfig = {
   },
   identityCachePath: '/tmp/manawg-mcp-test-identity.json',
   allowDestructive: false,
+  transport: 'stdio',
+  http: { host: '127.0.0.1', port: 8080, path: '/mcp' },
 };
 
 const cleanup: Array<() => Promise<void>> = [];
@@ -508,4 +510,35 @@ it('settles on a tokenless identity so later calls skip the bootstrap', async ()
   await client.call({ path: ['shopping'] });
 
   expect(fetchMock).toHaveBeenCalledTimes(3);
+});
+
+it('addresses account routes without the WG code and skips identity bootstrap', async () => {
+  const { config } = bootstrapConfig();
+  const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ wgs: [] }));
+  const client = createManaWgClient(config, fetchMock);
+
+  await expect(client.call({ path: ['mine'], scope: 'account' })).resolves.toEqual({ wgs: [] });
+
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(fetchMock.mock.calls[0]?.[0]).toBe('https://example.test/api/wg/mine');
+  const headers = fetchMock.mock.calls[0]?.[1]?.headers as Headers;
+  expect(headers.get('x-manawg-member-id')).toBeNull();
+  expect(headers.get('origin')).toBe(config.origin);
+});
+
+it('still sends the member headers on WG-scoped requests after an account call', async () => {
+  const { config } = bootstrapConfig();
+  const fetchMock = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(jsonResponse({ wgs: [] }))
+    .mockResolvedValueOnce(jsonResponse({ currentMember: { memberId: BOOTSTRAP_MEMBER_ID } }))
+    .mockResolvedValueOnce(jsonResponse({ openShopping: [] }));
+  const client = createManaWgClient(config, fetchMock);
+
+  await client.call({ path: ['mine'], scope: 'account' });
+  await client.call({ path: ['dashboard'] });
+
+  expect(fetchMock.mock.calls[2]?.[0]).toBe('https://example.test/api/wg/WG123/dashboard');
+  const headers = fetchMock.mock.calls[2]?.[1]?.headers as Headers;
+  expect(headers.get('x-manawg-member-id')).toBe(BOOTSTRAP_MEMBER_ID);
 });

@@ -23,6 +23,15 @@ export type SupabaseAuthConfig = {
   sessionCachePath: string;
 };
 
+export type TransportName = 'stdio' | 'http';
+
+export type HttpTransportConfig = {
+  host: string;
+  port: number;
+  path: string;
+  apiKey?: string;
+};
+
 export type AppConfig = {
   baseUrl: string;
   origin: string;
@@ -33,6 +42,8 @@ export type AppConfig = {
   auth: SupabaseAuthConfig;
   identityCachePath: string;
   allowDestructive: boolean;
+  transport: TransportName;
+  http: HttpTransportConfig;
 };
 
 function required(
@@ -126,6 +137,47 @@ function allowDestructive(env: NodeJS.ProcessEnv): boolean {
   return value !== undefined && TRUTHY_VALUES.has(value);
 }
 
+const DEFAULT_HTTP: HttpTransportConfig = { host: '127.0.0.1', port: 8080, path: '/mcp' };
+
+function transport(env: NodeJS.ProcessEnv): TransportName {
+  const value = env.MANAWG_TRANSPORT?.trim().toLowerCase();
+  if (!value || value === 'stdio') {
+    return 'stdio';
+  }
+  if (value === 'http') {
+    return 'http';
+  }
+  throw new Error('MANAWG_TRANSPORT must be stdio or http');
+}
+
+function httpTransport(env: NodeJS.ProcessEnv): HttpTransportConfig {
+  const host = env.MANAWG_HTTP_HOST?.trim() || DEFAULT_HTTP.host;
+  if (host.includes('/')) {
+    throw new Error('MANAWG_HTTP_HOST must be a host name or address');
+  }
+
+  const portRaw = env.MANAWG_HTTP_PORT?.trim();
+  let port = DEFAULT_HTTP.port;
+  if (portRaw) {
+    port = Number.parseInt(portRaw, 10);
+    if (!Number.isInteger(port) || port < 1 || port > 65535 || String(port) !== portRaw) {
+      throw new Error('MANAWG_HTTP_PORT must be an integer between 1 and 65535');
+    }
+  }
+
+  const path = env.MANAWG_HTTP_PATH?.trim() || DEFAULT_HTTP.path;
+  if (!path.startsWith('/') || path.includes('?') || path.endsWith('/')) {
+    throw new Error('MANAWG_HTTP_PATH must start with / and must not end with /');
+  }
+
+  const apiKey = env.MANAWG_HTTP_API_KEY?.trim();
+  if (apiKey && apiKey.length < 16) {
+    throw new Error('MANAWG_HTTP_API_KEY must be at least 16 characters long');
+  }
+
+  return { host, port, path, ...(apiKey ? { apiKey } : {}) };
+}
+
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const baseUrl = absoluteHttpUrl(env, 'MANAWG_BASE_URL');
   const origin = new URL(baseUrl).origin;
@@ -147,5 +199,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     auth: loadAuthConfig(env),
     identityCachePath: identityCachePath(env),
     allowDestructive: allowDestructive(env),
+    transport: transport(env),
+    http: httpTransport(env),
   };
 }

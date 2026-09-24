@@ -11,6 +11,8 @@ export type WgRequest = {
   method?: HttpMethod;
   query?: Record<string, string | number | boolean | undefined>;
   body?: unknown;
+  /** `account` targets the account-level routes under `/api/wg/*` that live outside a WG code. */
+  scope?: 'wg' | 'account';
 };
 
 export type ManaWgClient = {
@@ -209,7 +211,8 @@ export function createManaWgClient(
   auth?: SessionController,
 ): ManaWgClient {
   function buildUrl(request: WgRequest): string {
-    const segments = [config.wgCode, ...request.path].map((segment) => encodeURIComponent(segment));
+    const base = request.scope === 'account' ? [] : [config.wgCode];
+    const segments = [...base, ...request.path].map((segment) => encodeURIComponent(segment));
     const url = new URL([config.baseUrl, 'api', 'wg', ...segments].join('/'));
     for (const [name, value] of Object.entries(request.query ?? {})) {
       if (value !== undefined && value !== '') {
@@ -435,7 +438,7 @@ export function createManaWgClient(
 
   return {
     async call(request: WgRequest): Promise<unknown> {
-      const resolvedIdentity = await ensureIdentity();
+      const resolvedIdentity = request.scope === 'account' ? undefined : await ensureIdentity();
       const isWrite = (request.method ?? 'GET') !== 'GET';
       const idempotencyKey = isWrite ? randomUUID() : undefined;
       let response = await perform(request, resolvedIdentity, idempotencyKey);

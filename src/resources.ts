@@ -5,6 +5,7 @@ export type ResourceDef = {
   description: string;
   path: string[];
   query?: Record<string, string | number | boolean | undefined>;
+  scope?: 'wg' | 'account';
 };
 
 function resource(
@@ -13,10 +14,14 @@ function resource(
   description: string,
   path: string[],
   query?: Record<string, string | number | boolean | undefined>,
+  scope?: 'wg' | 'account',
 ): ResourceDef {
   const def: ResourceDef = { name, uri: `manawg://current/${name}`, title, description, path };
   if (query) {
     def.query = query;
+  }
+  if (scope) {
+    def.scope = scope;
   }
   return def;
 }
@@ -80,5 +85,49 @@ export const RESOURCE_DEFS: ResourceDef[] = [
     'Aktivitätsverlauf',
     'Chronologische Timeline aller Änderungen plus aktive Reminder.',
     ['activity'],
+  ),
+  resource(
+    'wg',
+    'Eigene WGs',
+    'Alle WGs des angemeldeten Accounts mit name, code und memberId (Route /api/wg/mine).',
+    ['mine'],
+    undefined,
+    'account',
+  ),
+];
+
+export type ResourceTemplateDef = {
+  name: string;
+  uriTemplate: string;
+  title: string;
+  description: string;
+  path: (id: string) => string[];
+};
+
+function entityResource(
+  name: string,
+  title: string,
+  description: string,
+  segments: string[],
+): ResourceTemplateDef {
+  return {
+    name,
+    uriTemplate: `manawg://current/${name}/{id}`,
+    title,
+    description,
+    path: (id) => [...segments, id],
+  };
+}
+
+/** Single-entity URIs for the routes that answer GET on their own. */
+export const RESOURCE_TEMPLATE_DEFS: ResourceTemplateDef[] = [
+  entityResource('event', 'Termin', 'Einzelner Kalendereintrag nach id (events/[id]).', ['events']),
+  entityResource('chore', 'Putzaufgabe', 'Einzelne Putzaufgabe nach id (chores/[id]).', ['chores']),
+  entityResource('member', 'Mitglied', 'Einzelnes Mitglied nach id (members/[id]).', ['members']),
+  entityResource(
+    'recurring',
+    'Fixkosten-Template',
+    'Einzelnes Fixkosten-Template nach id (recurring-expenses/[id]).',
+    ['recurring-expenses'],
   ),
 ];

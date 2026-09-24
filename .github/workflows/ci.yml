@@ -27,3 +27,37 @@ jobs:
       - run: pnpm test
       - run: pnpm build
       - run: pnpm smoke
+
+  container:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: manawg-mcp:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Smoke the image
+        run: |
+          docker run -d --name manawg-ci -p 18080:8080 \
+            -e MANAWG_BASE_URL=https://example.invalid \
+            -e MANAWG_WG_CODE=SMOKE0000 \
+            -e MANAWG_SUPABASE_URL=https://smoke.supabase.co \
+            -e MANAWG_SUPABASE_PUBLISHABLE_KEY=sb_publishable_smoke \
+            -e MANAWG_SUPABASE_REFRESH_TOKEN=refresh_token_smoke \
+            manawg-mcp:ci
+          for attempt in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:18080/health && break
+            sleep 1
+          done
+          curl -fsS http://127.0.0.1:18080/health | grep -q '"status":"ok"'
+          curl -fsS -X POST http://127.0.0.1:18080/mcp \
+            -H 'content-type: application/json' \
+            -H 'accept: application/json, text/event-stream' \
+            -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}' \
+            | grep -q 'manawg-mcp'
+          docker rm -f manawg-ci
