@@ -11,9 +11,15 @@
   "scripts": {
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "live-check": "node scripts/live-check.mjs",
+    "smoke": "node scripts/smoke-stdio.mjs",
+    "inspector": "npx -y @modelcontextprotocol/inspector node dist/index.js",
     "build": "tsc --outDir dist --rootDir src --noEmit false --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --verbatimModuleSyntax --skipLibCheck --types node src/*.ts"
   },
   "devDependencies": {
+    "@biomejs/biome": "^1.9.0",
     "@modelcontextprotocol/client": "^2",
     "@types/node": "^22.0.0",
     "typescript": "^5.7.0",

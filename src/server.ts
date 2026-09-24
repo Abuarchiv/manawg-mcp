@@ -1,93 +1,121 @@
 import { McpServer } from '@modelcontextprotocol/server';
-import { z } from 'zod';
-
-type ManaWgClient = {
-  getDashboard(): Promise<unknown>;
-  getShopping(): Promise<unknown>;
-  addShoppingItem(input: { name: string; quantity?: string }): Promise<unknown>;
-  completeChore(choreId: string): Promise<unknown>;
-};
+import type { ManaWgClient, WgRequest } from './manawg-client.js';
+import { ManaWgError } from './manawg-client.js';
+import { RESOURCE_DEFS, type ResourceDef } from './resources.js';
+import { TOOL_DEFS, type ToolDef, selectTools } from './tools/registry.js';
 
 const SAFE_ERROR_MESSAGE = 'ManaWG request failed';
 
-const shoppingAddSchema = z.object({
-  name: z.string().trim().min(1).max(120),
-  quantity: z.string().trim().min(1).max(40).optional(),
-});
+export type ServerOptions = {
+  allowDestructive?: boolean;
+};
 
-const choreCompleteSchema = z.object({
-  choreId: z.string().trim().uuid(),
-});
-
-export function buildServer(client: ManaWgClient): McpServer {
+export function buildServer(client: ManaWgClient, options: ServerOptions = {}): McpServer {
   const server = new McpServer({ name: 'manawg-mcp', version: '0.1.0' });
 
-  server.registerResource(
-    'current_dashboard',
-    'manawg://current/dashboard',
-    { title: 'Current ManaWG dashboard', mimeType: 'application/json' },
-    async (uri) => safeJsonResource(uri, () => client.getDashboard()),
-  );
+  for (const def of RESOURCE_DEFS) {
+    registerResource(server, client, def);
+  }
 
-  server.registerResource(
-    'current_shopping',
-    'manawg://current/shopping',
-    { title: 'Current ManaWG shopping list', mimeType: 'application/json' },
-    async (uri) => safeJsonResource(uri, () => client.getShopping()),
-  );
-
-  server.registerTool(
-    'shopping_add',
-    {
-      title: 'Add shopping item',
-      inputSchema: shoppingAddSchema,
-    },
-    async (input) => toolResult('Shopping item added', client.addShoppingItem(input)),
-  );
-
-  server.registerTool(
-    'chore_complete',
-    {
-      title: 'Complete chore',
-      inputSchema: choreCompleteSchema,
-    },
-    async ({ choreId }) => toolResult('Chore completed', client.completeChore(choreId)),
-  );
+  for (const def of selectTools(TOOL_DEFS, options.allowDestructive ?? false)) {
+    registerTool(server, client, def);
+  }
 
   return server;
 }
 
-function jsonResource(uri: URL, payload: unknown) {
-  return {
-    contents: [
-      {
-        uri: uri.href,
-        mimeType: 'application/json',
-        text: JSON.stringify(payload),
+function registerResource(server: McpServer, client: ManaWgClient, def: ResourceDef): void {
+  server.registerResource(
+    def.name,
+    def.uri,
+    { title: def.title, description: def.description, mimeType: 'application/json' },
+    async (uri) => {
+      const request: WgRequest = { method: 'GET', path: def.path };
+      if (def.query) {
+        request.query = def.query;
+      }
+      try {
+        const payload = await client.call(request);
+        return {
+          contents: [
+            { uri: uri.href, mimeType: 'application/json', text: JSON.stringify(payload) },
+          ],
+        };
+      } catch {
+        throw new Error(SAFE_ERROR_MESSAGE);
+      }
+    },
+  );
+}
+
+function registerTool(server: McpServer, client: ManaWgClient, def: ToolDef): void {
+  server.registerTool(
+    def.name,
+    {
+      title: def.title,
+      description: def.description,
+      inputSchema: def.input,
+      annotations: {
+        readOnlyHint: def.method === 'GET',
+        destructiveHint: def.gate === 'destructive',
+        idempotentHint: def.method === 'GET',
       },
-    ],
+    },
+    async (args) => {
+      const parsed = def.input.safeParse(args);
+      if (!parsed.success) {
+        return errorResult(`invalid_input: ${issueSummary(parsed.error.issues)}`);
+      }
+
+      const request: WgRequest = { method: def.method, path: def.path(parsed.data) };
+      if (def.query) {
+        request.query = def.query(parsed.data);
+      }
+      if (def.body) {
+        request.body = def.body(parsed.data);
+      }
+
+      try {
+        const payload = await client.call(request);
+        return {
+          content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
+          ...(isRecord(payload) ? { structuredContent: payload } : {}),
+        };
+      } catch (error) {
+        return errorResult(describeError(error));
+      }
+    },
+  );
+}
+
+function errorResult(message: string) {
+  return {
+    isError: true,
+    content: [{ type: 'text' as const, text: message }],
   };
 }
 
-async function safeJsonResource(uri: URL, read: () => Promise<unknown>) {
-  try {
-    return jsonResource(uri, await read());
-  } catch {
-    throw new Error(SAFE_ERROR_MESSAGE);
+function describeError(error: unknown): string {
+  if (error instanceof ManaWgError) {
+    let message = `${SAFE_ERROR_MESSAGE}: ${error.code}`;
+    if (error.details) {
+      message = `${message} (${error.details})`;
+    }
+    if (error.retryAfterSeconds !== undefined) {
+      message = `${message} retry_after_s=${error.retryAfterSeconds}`;
+    }
+    return message;
   }
+  return SAFE_ERROR_MESSAGE;
 }
 
-async function toolResult(text: string, action: Promise<unknown>) {
-  try {
-    const payload = await action;
-    return {
-      content: [{ type: 'text' as const, text }],
-      structuredContent: payload,
-    };
-  } catch {
-    return {
-      isError: true,
-      content: [{ type: 'text' as const, text: SAFE_ERROR_MESSAGE }],
-    };
-  }
+function issueSummary(issues: ReadonlyArray<{ path: PropertyKey[]; message: string }>): string {
+  return issues
+    .slice(0, 5)
+    .map((issue) => `${issue.path.map(String).join('.') || 'input'}: ${issue.message}`)
+    .join('; ');
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

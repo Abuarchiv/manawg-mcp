@@ -1,5 +1,9 @@
 import { expect, it } from 'vitest';
-import { loadConfig } from '../src/config.js';
+import {
+  DEFAULT_IDENTITY_CACHE_PATH,
+  DEFAULT_SESSION_CACHE_PATH,
+  loadConfig,
+} from '../src/config.js';
 
 function validEnv(): NodeJS.ProcessEnv {
   return {
@@ -7,6 +11,10 @@ function validEnv(): NodeJS.ProcessEnv {
     MANAWG_WG_CODE: 'WG123',
     MANAWG_MEMBER_ID: '00000000-0000-4000-8000-000000000001',
     MANAWG_MEMBER_TOKEN: 'a'.repeat(64),
+    MANAWG_SUPABASE_URL: 'https://project.supabase.co/',
+    MANAWG_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_key_abc',
+    MANAWG_EMAIL: 'member@example.test',
+    MANAWG_PASSWORD: 'correct horse battery',
   };
 }
 
@@ -24,29 +32,46 @@ function thrownMessage(action: () => unknown): string {
 
 it('rejects missing required credentials without echoing their values', () => {
   const env = validEnv();
-  delete env.MANAWG_WG_CODE;
+  env.MANAWG_WG_CODE = undefined;
   const message = thrownMessage(() => loadConfig(env));
 
   expect(message).toContain('MANAWG_WG_CODE');
   for (const value of [env.MANAWG_BASE_URL, env.MANAWG_MEMBER_ID, env.MANAWG_MEMBER_TOKEN]) {
-    expect(message).not.toContain(value!);
+    if (typeof value === 'string') {
+      expect(message).not.toContain(value);
+    }
   }
   for (const name of ['MANAWG_MEMBER_ID', 'MANAWG_MEMBER_TOKEN', 'MEMBER_SESSION_SECRET']) {
     expect(message).not.toContain(name);
   }
 });
 
-it('does not expose secret names when the member token is missing', () => {
+it('does not expose secret names when only part of the member identity is set', () => {
   const env = validEnv();
-  delete env.MANAWG_MEMBER_TOKEN;
+  env.MANAWG_MEMBER_TOKEN = undefined;
   const message = thrownMessage(() => loadConfig(env));
 
   expect(message).not.toContain('MANAWG_MEMBER_TOKEN');
   expect(message).not.toContain('MEMBER_SESSION_SECRET');
 });
 
+it('allows bootstrap mode when both member identity values are missing', () => {
+  const env = validEnv();
+  env.MANAWG_MEMBER_ID = undefined;
+  env.MANAWG_MEMBER_TOKEN = undefined;
+  const config = loadConfig(env);
+
+  expect(config.memberId).toBeUndefined();
+  expect(config.memberToken).toBeUndefined();
+  expect(config.identityCachePath).toBe(DEFAULT_IDENTITY_CACHE_PATH);
+});
+
 it('accepts a valid configuration and normalizes the base URL', () => {
   expect(loadConfig(validEnv()).baseUrl).toBe('https://example.test');
+});
+
+it('derives the Origin header from the base URL', () => {
+  expect(loadConfig(validEnv()).origin).toBe('https://example.test');
 });
 
 it('rejects an invalid base URL', () => {
@@ -69,6 +94,106 @@ it('rejects a non-hexadecimal member token', () => {
   expect(message).not.toContain(env.MANAWG_MEMBER_TOKEN);
 });
 
+it('rejects a non-http Supabase URL without echoing credentials', () => {
+  const env: NodeJS.ProcessEnv = {
+    ...validEnv(),
+    MANAWG_SUPABASE_URL: 'ftp://project.supabase.co',
+  };
+  const message = thrownMessage(() => loadConfig(env));
+
+  expect(message).toContain('MANAWG_SUPABASE_URL');
+  expect(message).not.toContain('correct horse battery');
+  expect(message).not.toContain('sb_publishable_key_abc');
+});
+
+it('requires Supabase configuration for the session', () => {
+  const env = validEnv();
+  env.MANAWG_SUPABASE_URL = undefined;
+  const message = thrownMessage(() => loadConfig(env));
+
+  expect(message).toContain('MANAWG_SUPABASE_URL');
+  expect(message).not.toContain('correct horse battery');
+});
+
+it('requires either a refresh token or an email/password pair', () => {
+  const env = validEnv();
+  env.MANAWG_EMAIL = undefined;
+  env.MANAWG_PASSWORD = undefined;
+  env.MANAWG_SUPABASE_REFRESH_TOKEN = undefined;
+  const message = thrownMessage(() => loadConfig(env));
+
+  expect(message).toContain('MANAWG_SUPABASE_REFRESH_TOKEN');
+  expect(message).toContain('MANAWG_EMAIL');
+  expect(message).toContain('MANAWG_PASSWORD');
+  expect(message).not.toContain('a'.repeat(64));
+});
+
+it('prefers the refresh token over password sign-in when both are set', () => {
+  const config = loadConfig({
+    ...validEnv(),
+    MANAWG_SUPABASE_REFRESH_TOKEN: 'refresh-token-value',
+  });
+
+  expect(config.auth.bootstrapRefreshToken).toBe('refresh-token-value');
+  expect(config.auth.email).toBeUndefined();
+  expect(config.auth.password).toBeUndefined();
+});
+
+it('treats a blank refresh token as absent', () => {
+  const env = { ...validEnv(), MANAWG_SUPABASE_REFRESH_TOKEN: '   ' };
+  const config = loadConfig(env);
+
+  expect(config.auth.bootstrapRefreshToken).toBeUndefined();
+  expect(config.auth.email).toBe('member@example.test');
+});
+
+it('keeps the publishable key and email without leaking them on other failures', () => {
+  const config = loadConfig({ ...validEnv(), MANAWG_WG_CODE: 'WG123' });
+
+  expect(config.auth.publishableKey).toBe('sb_publishable_key_abc');
+  expect(config.auth.email).toBe('member@example.test');
+  expect(config.auth.url).toBe('https://project.supabase.co');
+});
+
+it('uses a default session cache path outside the working directory config', () => {
+  expect(loadConfig(validEnv()).auth.sessionCachePath).toBe(DEFAULT_SESSION_CACHE_PATH);
+});
+
+it('honours an explicit session cache path', () => {
+  const config = loadConfig({ ...validEnv(), MANAWG_SESSION_CACHE: '/tmp/manawg/session.json' });
+
+  expect(config.auth.sessionCachePath).toBe('/tmp/manawg/session.json');
+  expect(config.identityCachePath).toBe('/tmp/manawg/identity.json');
+});
+
+it('honours an explicit identity cache path over the session cache directory', () => {
+  const config = loadConfig({
+    ...validEnv(),
+    MANAWG_SESSION_CACHE: '/tmp/manawg/session.json',
+    MANAWG_IDENTITY_CACHE: '/var/identity.json',
+  });
+
+  expect(config.identityCachePath).toBe('/var/identity.json');
+});
+
+it.each([
+  ['1', true],
+  ['true', true],
+  ['YES', true],
+  ['on', true],
+  ['0', false],
+  ['false', false],
+  ['', false],
+])('parses MANAWG_ALLOW_DESTRUCTIVE=%j as %s', (value, expected) => {
+  expect(loadConfig({ ...validEnv(), MANAWG_ALLOW_DESTRUCTIVE: value }).allowDestructive).toBe(
+    expected,
+  );
+});
+
+it('leaves destructive tools disabled when the flag is missing', () => {
+  expect(loadConfig(validEnv()).allowDestructive).toBe(false);
+});
+
 it('trims all environment values before returning the configuration', () => {
   expect(
     loadConfig({
@@ -76,12 +201,27 @@ it('trims all environment values before returning the configuration', () => {
       MANAWG_WG_CODE: '  WG123  ',
       MANAWG_MEMBER_ID: '  00000000-0000-4000-8000-000000000001  ',
       MANAWG_MEMBER_TOKEN: `  ${'a'.repeat(64)}  `,
+      MANAWG_SUPABASE_URL: '  https://project.supabase.co/  ',
+      MANAWG_SUPABASE_PUBLISHABLE_KEY: '  sb_publishable_key_abc  ',
+      MANAWG_EMAIL: '  member@example.test  ',
+      MANAWG_PASSWORD: '  correct horse battery  ',
+      MANAWG_ALLOW_DESTRUCTIVE: '  1  ',
     }),
   ).toEqual({
     baseUrl: 'https://example.test',
+    origin: 'https://example.test',
     wgCode: 'WG123',
     memberId: '00000000-0000-4000-8000-000000000001',
     memberToken: 'a'.repeat(64),
     timeoutMs: 10_000,
+    auth: {
+      url: 'https://project.supabase.co',
+      publishableKey: 'sb_publishable_key_abc',
+      email: 'member@example.test',
+      password: 'correct horse battery',
+      sessionCachePath: DEFAULT_SESSION_CACHE_PATH,
+    },
+    identityCachePath: DEFAULT_IDENTITY_CACHE_PATH,
+    allowDestructive: true,
   });
 });
