@@ -243,10 +243,14 @@ it('retries a read after a network failure and then succeeds', async () => {
 
 it.each([
   [400, 'name_invalid'],
+  [400, 'expected_occurrence_invalid'],
+  [400, 'expected_state_invalid'],
   [401, 'member_id_invalid'],
   [403, 'member_not_verified'],
   [404, 'wg_not_found'],
   [409, 'shopping_item_duplicate'],
+  [409, 'chore_occurrence_changed'],
+  [409, 'shopping_item_changed'],
 ] as const)('does not retry HTTP %i writes and returns the safe code', async (status, code) => {
   const fetchMock = vi
     .fn<typeof fetch>()

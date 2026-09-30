@@ -61,11 +61,18 @@ export const choreTools = [
     name: 'chore_complete',
     title: 'Putzaufgabe erledigen',
     description:
-      'Quittiert die Erledigung, trackt lastCompletedBy/At und rückt nextDueAt automatisch weiter. Wiederholbare Aktion — bei doppeltem Aufruf schiebt sich der Termin nur weiter.',
+      'Vorher chores_list lesen; nextDueAt als expectedNextDueAt und assignedMemberId (UUID oder null) als expectedAssignedMemberId exakt mitsenden. 409 chore_occurrence_changed: neu lesen und erneut entscheiden, nicht blind wiederholen.',
     method: 'POST',
-    input: z.strictObject({ id: uuid }),
+    input: z.strictObject({
+      id: uuid,
+      expectedNextDueAt: isoDateTime,
+      expectedAssignedMemberId: uuid.nullable(),
+    }),
     path: (input) => ['chores', input.id, 'complete'],
-    body: () => ({}),
+    body: (input) => ({
+      expectedNextDueAt: input.expectedNextDueAt,
+      expectedAssignedMemberId: input.expectedAssignedMemberId,
+    }),
   }),
   defineTool({
     name: 'chore_delete',

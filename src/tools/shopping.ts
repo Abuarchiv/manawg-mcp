@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { defineTool, uuid } from './finance.js';
+import { defineTool, isoDateTime, uuid } from './finance.js';
 
 const itemName = z.string().trim().min(1).max(120);
 const quantity = z.string().trim().min(1).max(40).optional();
@@ -9,7 +9,7 @@ export const shoppingTools = [
     name: 'shopping_list',
     title: 'Einkaufsliste lesen',
     description:
-      'Offene und gekaufte Artikel (max 1000), sortiert nach boughtAt. Enthält addedBy/addedByName, boughtBy, boughtAt.',
+      'Offene und gekaufte Artikel (max 1000), sortiert nach boughtAt. Enthält addedBy/addedByName, boughtBy, boughtAt und updatedAt; beide Zeitstempel für shopping_set_bought verwenden.',
     method: 'GET',
     input: z.strictObject({}),
     path: () => ['shopping'],
@@ -31,11 +31,21 @@ export const shoppingTools = [
   defineTool({
     name: 'shopping_set_bought',
     title: 'Artikel als gekauft markieren',
-    description: 'bought true/false. boughtBy wird automatisch zum Aufrufer gesetzt.',
+    description:
+      'Vorher shopping_list lesen und updatedAt sowie boughtAt (oder null) exakt mitsenden. 409 shopping_item_changed: neu lesen und erneut entscheiden. boughtBy wird automatisch zum Aufrufer gesetzt.',
     method: 'PATCH',
-    input: z.strictObject({ id: uuid, bought: z.boolean() }),
+    input: z.strictObject({
+      id: uuid,
+      bought: z.boolean(),
+      expectedUpdatedAt: isoDateTime,
+      expectedBoughtAt: isoDateTime.nullable(),
+    }),
     path: (input) => ['shopping', input.id],
-    body: (input) => ({ bought: input.bought }),
+    body: (input) => ({
+      bought: input.bought,
+      expectedUpdatedAt: input.expectedUpdatedAt,
+      expectedBoughtAt: input.expectedBoughtAt,
+    }),
   }),
   defineTool({
     name: 'shopping_remove',

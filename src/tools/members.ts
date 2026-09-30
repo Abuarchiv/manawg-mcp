@@ -1,12 +1,6 @@
 import { z } from 'zod';
 import { defineTool, uuid } from './finance.js';
 
-const paypalMerchantId = z
-  .string()
-  .trim()
-  .toUpperCase()
-  .regex(/^[2-9A-HJ-NP-Z]{13}$/u, 'paypal_merchant_id_invalid');
-
 const notifyFlags = z.strictObject({
   pushOptIn: z.boolean().optional(),
   notifyAnnouncements: z.boolean().optional(),
@@ -48,13 +42,12 @@ export const memberTools = [
     name: 'member_update',
     title: 'Mitglied ändern (Admin/sensibel)',
     description:
-      'active false deaktiviert das Mitglied (nur Owner oder Admin, sonst not_owner/admin_required; Admins selbst nicht deaktivierbar) und paypalMerchantId setzt die eigene PayPal-Kennung. Mindestens ein Feld erforderlich.',
+      'Setzt active false für einen reversiblen Auszug oder active true zur Reaktivierung. Nur verifizierte Owner oder Admins (sonst not_owner); Admin-Mitglieder können nicht deaktiviert werden (admin_required). active ist erforderlich. PayPal verbindest du über die WG-Einstellungen im Browser; manuelle Kennungen lassen sich hier weder setzen noch löschen.',
     method: 'PATCH',
     gate: 'destructive',
     input: z.strictObject({
       id: uuid,
-      active: z.boolean().optional(),
-      paypalMerchantId: paypalMerchantId.nullable().optional(),
+      active: z.boolean(),
     }),
     path: (input) => ['members', input.id],
     body: (input) => {

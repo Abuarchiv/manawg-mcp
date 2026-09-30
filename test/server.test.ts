@@ -126,15 +126,94 @@ it('routes shopping_add with trimmed input', async () => {
 it('routes chore_complete to the complete action', async () => {
   const fake = fakeClient({ chore: { id: VALID_ID, completed: true } });
   const client = await connectTestServer(buildServer(fake));
+  const expectedNextDueAt = '2026-09-27T12:00:00.000Z';
 
-  const result = await client.callTool({ name: 'chore_complete', arguments: { id: VALID_ID } });
+  const result = await client.callTool({
+    name: 'chore_complete',
+    arguments: { id: VALID_ID, expectedNextDueAt, expectedAssignedMemberId: null },
+  });
 
   expect(fake.call).toHaveBeenCalledWith({
     method: 'POST',
     path: ['chores', VALID_ID, 'complete'],
-    body: {},
+    body: { expectedNextDueAt, expectedAssignedMemberId: null },
   });
   expect(result.structuredContent).toEqual({ chore: { id: VALID_ID, completed: true } });
+});
+
+it('routes shopping_set_bought with the item version', async () => {
+  const fake = fakeClient({ item: { id: VALID_ID, boughtAt: null } });
+  const client = await connectTestServer(buildServer(fake));
+  const expectedUpdatedAt = '2026-09-27T12:00:00.000Z';
+
+  await client.callTool({
+    name: 'shopping_set_bought',
+    arguments: { id: VALID_ID, bought: true, expectedUpdatedAt, expectedBoughtAt: null },
+  });
+
+  expect(fake.call).toHaveBeenCalledWith({
+    method: 'PATCH',
+    path: ['shopping', VALID_ID],
+    body: { bought: true, expectedUpdatedAt, expectedBoughtAt: null },
+  });
+});
+
+it('rejects empty member updates and direct PayPal merchant-ID edits', async () => {
+  for (const input of [
+    { id: VALID_ID },
+    { id: VALID_ID, active: false, paypalMerchantId: '2B23456789ABC' },
+    { id: VALID_ID, active: true, paypalMerchantId: null },
+  ]) {
+    const fake = fakeClient();
+    const client = await connectTestServer(buildServer(fake, { allowDestructive: true }));
+    const result = await client.callTool({ name: 'member_update', arguments: input });
+
+    expect(result.isError).toBe(true);
+    expect((result.content as Array<{ text: string }>)[0]?.text).toMatch(
+      /Input validation error|invalid_input/,
+    );
+    expect(fake.call).not.toHaveBeenCalled();
+  }
+});
+
+it('routes member_update only with the app-supported active field', async () => {
+  const fake = fakeClient({ member: { id: VALID_ID, active: false } });
+  const client = await connectTestServer(buildServer(fake, { allowDestructive: true }));
+
+  const result = await client.callTool({
+    name: 'member_update',
+    arguments: { id: VALID_ID, active: false },
+  });
+
+  expect(fake.call).toHaveBeenCalledWith({
+    method: 'PATCH',
+    path: ['members', VALID_ID],
+    body: { active: false },
+  });
+  expect(result.isError).not.toBe(true);
+});
+
+it('documents browser-only PayPal linking and capture reconciliation', async () => {
+  const client = await connectTestServer(buildServer(fakeClient(), { allowDestructive: true }));
+  const tools = (await client.listTools()).tools;
+  const byName = new Map(tools.map((tool) => [tool.name, tool]));
+  const update = byName.get('member_update');
+
+  expect(update?.inputSchema.properties).not.toHaveProperty('paypalMerchantId');
+  expect(update?.description).toContain('WG-Einstellungen im Browser');
+  const orderDescription = byName.get('paypal_order_create')?.description ?? '';
+  const captureDescription = byName.get('paypal_capture')?.description ?? '';
+  expect(orderDescription).toContain('WG-Einstellungen im Browser verbinden');
+  expect(orderDescription).toContain('startet oder bestätigt keinen PayPal-Checkout');
+  expect(orderDescription).not.toContain('paypal_recipient_missing');
+  expect(orderDescription).not.toContain('paypal_onboarding_pending');
+  expect(captureDescription).toContain('vom Zahler bestätigte Order');
+  expect(captureDescription).toContain('PENDING');
+  expect(captureDescription).toContain('COMPLETED');
+  expect(captureDescription).toContain('FAILED/CANCELLED');
+  for (const code of ['paypal_order_expired', 'paypal_order_not_found', 'paypal_not_configured']) {
+    expect(captureDescription).not.toContain(code);
+  }
 });
 
 it('routes path ids, bodies and query parameters per tool', async () => {
@@ -195,6 +274,26 @@ const invalidToolCalls: Array<[label: string, name: string, input: Record<string
   ['unknown argument', 'shopping_add', { name: 'Milch', admin: true }],
   ['missing name', 'shopping_add', { quantity: '2' }],
   ['invalid chore id', 'chore_complete', { id: 'chore-1' }],
+  [
+    'missing chore occurrence date',
+    'chore_complete',
+    { id: VALID_ID, expectedAssignedMemberId: null },
+  ],
+  [
+    'missing chore assignment expectation',
+    'chore_complete',
+    { id: VALID_ID, expectedNextDueAt: '2026-09-27T12:00:00.000Z' },
+  ],
+  [
+    'missing shopping updatedAt expectation',
+    'shopping_set_bought',
+    { id: VALID_ID, bought: true, expectedBoughtAt: null },
+  ],
+  [
+    'missing shopping boughtAt expectation',
+    'shopping_set_bought',
+    { id: VALID_ID, bought: true, expectedUpdatedAt: '2026-09-27T12:00:00.000Z' },
+  ],
   ['zero amount', 'expense_create', { amountCents: 0, description: 'x', splits: [] }],
   [
     'too many splits',

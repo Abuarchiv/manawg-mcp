@@ -179,6 +179,18 @@ confirmation.
 Input schemas mirror the API contract (money in `amountCents`, ISO datetimes with offset, split
 counts, lengths). Every tool returns the route payload as text plus `structuredContent`.
 
+For `chore_complete`, read `chores_list` first and pass `nextDueAt` as `expectedNextDueAt` and
+`assignedMemberId` (UUID or null) as `expectedAssignedMemberId`. For `shopping_set_bought`, read
+`shopping_list` first and pass `updatedAt` as `expectedUpdatedAt` and `boughtAt` (or null) as
+`expectedBoughtAt`. On
+`chore_occurrence_changed` or `shopping_item_changed`, read again and decide before retrying.
+
+PayPal orders and captures require destructive mode. The recipient connects PayPal in the browser
+under WG settings; the MCP does not perform OAuth or launch checkout. The payer must approve the
+order in the ManaWG browser checkout before `paypal_capture`. Captures may return `PENDING` while
+PayPal reconciles; retry with the same `orderId`. Terminal results may be `FAILED` or `CANCELLED`;
+`COMPLETED` records the payment in open-balance calculations without changing expense splits.
+
 ## Error contract
 
 Transient failures are retried inside the server: up to two extra attempts (200 ms, 800 ms) for
@@ -196,8 +208,8 @@ Tool and resource failures never carry upstream messages, URLs or credentials:
 
 ## Not exposed on purpose
 
-PayPal orders/captures, CSV/OCR imports, the calendar feed URL (contains a feed secret), push
-subscription endpoints, `test_notification`, joining/claiming members and WG deletion. Set
+PayPal OAuth linking (browser-only), manual merchant-ID editing, the calendar feed URL (contains a
+feed secret), push subscription endpoints, `test_notification` and WG deletion. Set
 `MANAWG_ALLOW_DESTRUCTIVE=1` to enable the destructive tools listed above.
 
 ## Development

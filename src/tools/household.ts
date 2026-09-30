@@ -53,7 +53,7 @@ export const householdTools = [
     name: 'paypal_order_create',
     title: 'PayPal-Zahlung anlegen',
     description:
-      'Erstellt eine PayPal-Order für die offene Schuld fromMemberId → toMemberId und gibt orderId und amountCents zurück. Nur EUR, der Aufrufer muss der debtor sein (not_party_to_debt), das Konto muss verifiziert sein (member_not_verified) und beim Empfänger muss ein PayPal-Merchant hinterlegt sein (paypal_recipient_missing). Die Zahlung bewegt erst paypal_capture Geld.',
+      'Erstellt eine PayPal-Order für die offene Schuld fromMemberId → toMemberId und gibt orderId und amountCents zurück. Der Empfänger muss PayPal vorher in den WG-Einstellungen im Browser verbinden. Dieses Tool liefert nur die orderId und startet oder bestätigt keinen PayPal-Checkout; für normale Zahlungen den Checkout in der ManaWG-Web-App nutzen. Nur EUR; der Aufrufer muss debtor und verifiziert sein. Das Anlegen der Order bewegt noch kein Geld — erst paypal_capture versucht die Einlösung.',
     method: 'POST',
     gate: 'destructive',
     input: z.strictObject({ fromMemberId: uuid, toMemberId: uuid }),
@@ -64,7 +64,7 @@ export const householdTools = [
     name: 'paypal_capture',
     title: 'PayPal-Zahlung einlösen',
     description:
-      'Zahlt die zuvor angelegte Order ein (orderId) und markiert die Splits als beglichen; Antwort status COMPLETED mit amountCents und currency. Nur der anlegendende debtor darf einlösen, bereits erledigte Orders antworten erneut COMPLETED (idempotent). paypal_order_expired, paypal_order_not_found und paypal_not_configured erscheinen als conflict.',
+      'Löst eine zuvor im PayPal-Checkout der ManaWG-Web-App vom Zahler bestätigte Order ein (orderId); MCP startet diesen Browser-Schritt nicht. Antwortstatus ist COMPLETED nach erfasster Zahlung, PENDING (HTTP 202) solange PayPal noch abgeglichen wird oder FAILED/CANCELLED bei einem endgültigen Fehlschlag. Bei PENDING dieselbe orderId erneut senden. Abgeschlossene Zahlungen werden mit offenen Salden verrechnet, ändern aber keine Ausgabe-Splits. Nur der anlegende debtor darf einlösen; abgeschlossene Orders antworten idempotent erneut mit COMPLETED.',
     method: 'POST',
     gate: 'destructive',
     input: z.strictObject({ orderId: z.string().trim().min(1).max(100) }),

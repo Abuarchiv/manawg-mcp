@@ -26,7 +26,7 @@ V1 was never executed against the real app. Three findings define this spec:
 | D6 | Tools are declared in a registry (`src/tools/*.ts`) with title, description, schema, annotations | 65 hand-written `registerTool` blocks would drift in quality |
 | D7 | Destructive tools (deletes, member/WG settings, reminder pushes) are not registered unless `MANAWG_ALLOW_DESTRUCTIVE=1` | An agent must not be able to destroy data by default |
 | D8 | Errors surface only allowlisted codes, never upstream messages | Response bodies can carry input echoes and upstream detail |
-| D9 | PayPal, imports, calendar feed, push subscriptions, `test_notification`, member join/claim and WG deletion stay out of scope | Money movement, secrets, and one-shot identity flows are out of scope for V2 |
+| D9 | PayPal OAuth linking and payer checkout approval stay browser-only; calendar feed, push subscriptions, `test_notification` and WG deletion stay out of scope | The current README exposes order/capture, imports and member-claim tools; OAuth and checkout approval remain in the browser |
 | D10 | `MANAWG_MEMBER_ID`/`MANAWG_MEMBER_TOKEN` are optional; without them the client reads both from `GET /api/wg/[code]` after the first working session and caches them in `identity.json` (`0600`) | The app derives the member token server-side, so operators cannot look it up themselves; setup reduces to the WG code plus one sign-in mode |
 
 ## Surface
