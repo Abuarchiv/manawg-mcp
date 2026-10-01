@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { defineTool, uuid } from './finance.js';
+import { uuid } from './shared.js';
+import { defineTool } from './types.js';
 
 const units = z.enum(['Stück', 'L', 'kg', 'Rolle', 'Packung']);
 const categories = z.enum(['bad', 'kueche', 'putzmittel', 'sonstiges']);

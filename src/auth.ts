@@ -11,7 +11,7 @@ export const MAX_CHUNK_SIZE = 3180;
  */
 const BASE64_PREFIX = 'base64-';
 
-export type SupabaseSession = {
+type SupabaseSession = {
   access_token: string;
   refresh_token: string;
   expires_at: number;

@@ -1,9 +1,9 @@
 import type { z } from 'zod';
 import type { HttpMethod } from '../manawg-client.js';
 
-export type QueryParams = Record<string, string | number | boolean | undefined>;
+type QueryParams = Record<string, string | number | boolean | undefined>;
 
-export type ToolGate = 'destructive';
+type ToolGate = 'destructive';
 
 export type ToolDef = {
   name: string;
@@ -36,33 +36,8 @@ type ToolSpec<TInput extends z.ZodType> = {
 };
 
 export function defineTool<TInput extends z.ZodType>(spec: ToolSpec<TInput>): ToolDef {
-  const def: ToolDef = {
-    name: spec.name,
-    title: spec.title,
-    description: spec.description,
-    method: spec.method,
-    input: spec.input,
-    path: spec.path as (input: unknown) => string[],
-  };
-  if (spec.query) {
-    def.query = spec.query as (input: unknown) => QueryParams;
-  }
-  if (spec.body) {
-    def.body = spec.body as (input: unknown) => unknown;
-  }
-  if (spec.gate) {
-    def.gate = spec.gate;
-  }
-  if (spec.scope) {
-    def.scope = spec.scope;
-  }
-  if (spec.readOnly) {
-    def.readOnly = spec.readOnly;
-  }
-  if (spec.transform) {
-    def.transform = spec.transform as (input: unknown, payload: unknown) => unknown;
-  }
-  return def;
+  // Handlers are typed against the parsed input here; the registry validates before calling them.
+  return spec as unknown as ToolDef;
 }
 
 export function selectTools(tools: ToolDef[], allowDestructive: boolean): ToolDef[] {

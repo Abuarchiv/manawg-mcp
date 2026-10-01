@@ -7,7 +7,7 @@ export type PayloadLimits = {
 
 export type CapResult = { payload: unknown; truncated: boolean };
 
-export const META_KEY = '_mcp';
+const META_KEY = '_mcp';
 export const DEFAULT_MAX_BYTES = 100_000;
 
 export function isRecord(value: unknown): value is Record<string, unknown> {

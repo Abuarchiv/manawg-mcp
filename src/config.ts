@@ -23,9 +23,9 @@ export type SupabaseAuthConfig = {
   sessionCachePath: string;
 };
 
-export type TransportName = 'stdio' | 'http';
+type TransportName = 'stdio' | 'http';
 
-export type HttpTransportConfig = {
+type HttpTransportConfig = {
   host: string;
   port: number;
   path: string;

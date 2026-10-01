@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { defineTool, isoDateTime, uuid } from './finance.js';
+import { isoDateTime, uuid } from './shared.js';
+import { defineTool } from './types.js';
 
 const when = z.union([z.iso.date(), z.iso.datetime({ offset: true })]);
 const eventTitle = z.string().trim().min(1).max(200);

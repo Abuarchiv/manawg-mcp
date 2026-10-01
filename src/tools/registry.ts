@@ -11,7 +11,7 @@ import { recurringTools } from './recurring.js';
 import { shoppingTools } from './shopping.js';
 import type { ToolDef } from './types.js';
 
-export { selectTools, type ToolDef, type ToolGate } from './types.js';
+export { selectTools, type ToolDef } from './types.js';
 
 export const TOOL_DEFS: ToolDef[] = [
   ...overviewTools,

@@ -19,7 +19,7 @@ export type ManaWgClient = {
   call(request: WgRequest): Promise<unknown>;
 };
 
-export type MemberIdentity = {
+type MemberIdentity = {
   memberId: string;
   memberToken?: string;
 };

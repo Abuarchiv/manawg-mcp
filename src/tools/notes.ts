@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { defineTool, imageUrl, uuid } from './finance.js';
+import { imageUrl, uuid } from './shared.js';
+import { defineTool } from './types.js';
 
 const content = z.string().trim().min(1).max(2000);
 const commentContent = z.string().trim().min(1).max(600);

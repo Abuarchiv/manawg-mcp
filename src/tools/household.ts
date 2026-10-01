@@ -1,9 +1,7 @@
 import { z } from 'zod';
 import { defineTool } from './types.js';
 
-export { defineTool } from './types.js';
-
-const uuid = z.uuid();
+import { uuid } from './shared.js';
 const importSource = z.enum(['splitwise_csv', 'splid_csv', 'ocr_text']);
 
 export const householdTools = [
