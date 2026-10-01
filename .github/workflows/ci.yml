@@ -38,6 +38,8 @@ jobs:
         with:
           context: .
           push: false
+          # buildx exportiert sonst nicht in den lokalen Daemon; der Smoke-Schritt fand das Image nie (seit 2026-09-24 rot).
+          load: true
           tags: manawg-mcp:ci
           cache-from: type=gha
           cache-to: type=gha,mode=max

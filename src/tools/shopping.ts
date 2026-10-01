@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { defineTool, isoDateTime, uuid } from './finance.js';
+import { isoDateTime, uuid } from './shared.js';
+import { defineTool } from './types.js';
 
 const itemName = z.string().trim().min(1).max(120);
 const quantity = z.string().trim().min(1).max(40).optional();

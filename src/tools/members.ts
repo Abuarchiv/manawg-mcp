@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { defineTool, uuid } from './finance.js';
+import { uuid } from './shared.js';
+import { defineTool } from './types.js';
 
 const notifyFlags = z.strictObject({
   pushOptIn: z.boolean().optional(),

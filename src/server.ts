@@ -2,7 +2,7 @@ import { createRequire } from 'node:module';
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/server';
 import type { ManaWgClient, WgRequest } from './manawg-client.js';
 import { ManaWgError } from './manawg-client.js';
-import { DEFAULT_MAX_BYTES, capPayload } from './payload.js';
+import { DEFAULT_MAX_BYTES, capPayload, isRecord } from './payload.js';
 import { PROMPT_DEFS } from './prompts.js';
 import {
   RESOURCE_DEFS,
@@ -205,8 +205,4 @@ function issueSummary(issues: ReadonlyArray<{ path: PropertyKey[]; message: stri
     .slice(0, 5)
     .map((issue) => `${issue.path.map(String).join('.') || 'input'}: ${issue.message}`)
     .join('; ');
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
