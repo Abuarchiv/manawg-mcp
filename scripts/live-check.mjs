@@ -62,21 +62,6 @@ console.error(`wg_code: ${mask(config.wgCode)}`);
 console.error(`auth_mode: ${config.auth.bootstrapRefreshToken ? 'refresh_token' : 'password'}`);
 console.error(`destructive_tools: ${config.allowDestructive ? 'enabled' : 'disabled'}`);
 
-function memberIdSource() {
-  if (config.memberId) {
-    return config.memberId;
-  }
-  try {
-    const cached = JSON.parse(readFileSync(config.identityCachePath, 'utf8'));
-    if (typeof cached?.memberId === 'string') {
-      return cached.memberId;
-    }
-  } catch {
-    // No bootstrap cache yet.
-  }
-  return undefined;
-}
-
 const auth = createSessionController(config.auth);
 const client = createManaWgClient(config, fetch, auth);
 
@@ -99,12 +84,18 @@ const probes = [
     () => reach(`${config.auth.url}/auth/v1/health`, { apikey: config.auth.publishableKey }),
   ],
   ['session', () => auth.cookieHeader()],
+  ['wg_list', () => client.call({ path: ['mine'], scope: 'account' })],
   ['wg_overview', () => client.call({ path: [] })],
   ['dashboard', () => client.call({ path: ['dashboard'] })],
   ['shopping', () => client.call({ path: ['shopping'] })],
   ['expenses', () => client.call({ path: ['expenses'] })],
   ['members', () => client.call({ path: ['members'], query: { limit: 5, offset: 0 } })],
   ['chat_messages', () => client.call({ path: ['chat', 'messages'], query: { limit: 5 } })],
+  ['chores', () => client.call({ path: ['chores'] })],
+  ['inventory', () => client.call({ path: ['inventory'] })],
+  ['events', () => client.call({ path: ['events'] })],
+  ['notes', () => client.call({ path: ['announcements'] })],
+  ['recurring', () => client.call({ path: ['recurring-expenses'] })],
 ];
 
 let failed = false;
@@ -124,6 +115,5 @@ for (const [name, run] of probes) {
   }
 }
 
-console.error(`member_id: ${mask(memberIdSource())}`);
 console.error(failed ? 'live_check: FAILED' : 'live_check: OK');
 process.exit(failed ? 1 : 0);

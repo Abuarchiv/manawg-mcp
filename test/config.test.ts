@@ -1,16 +1,10 @@
 import { expect, it } from 'vitest';
-import {
-  DEFAULT_IDENTITY_CACHE_PATH,
-  DEFAULT_SESSION_CACHE_PATH,
-  loadConfig,
-} from '../src/config.js';
+import { DEFAULT_SESSION_CACHE_PATH, loadConfig } from '../src/config.js';
 
 function validEnv(): NodeJS.ProcessEnv {
   return {
     MANAWG_BASE_URL: 'https://example.test/',
     MANAWG_WG_CODE: 'WG123',
-    MANAWG_MEMBER_ID: '00000000-0000-4000-8000-000000000001',
-    MANAWG_MEMBER_TOKEN: 'a'.repeat(64),
     MANAWG_SUPABASE_URL: 'https://project.supabase.co/',
     MANAWG_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_key_abc',
     MANAWG_EMAIL: 'member@example.test',
@@ -36,34 +30,12 @@ it('rejects missing required credentials without echoing their values', () => {
   const message = thrownMessage(() => loadConfig(env));
 
   expect(message).toContain('MANAWG_WG_CODE');
-  for (const value of [env.MANAWG_BASE_URL, env.MANAWG_MEMBER_ID, env.MANAWG_MEMBER_TOKEN]) {
+  for (const value of [env.MANAWG_BASE_URL, env.MANAWG_PASSWORD]) {
     if (typeof value === 'string') {
       expect(message).not.toContain(value);
     }
   }
-  for (const name of ['MANAWG_MEMBER_ID', 'MANAWG_MEMBER_TOKEN', 'MEMBER_SESSION_SECRET']) {
-    expect(message).not.toContain(name);
-  }
-});
-
-it('does not expose secret names when only part of the member identity is set', () => {
-  const env = validEnv();
-  env.MANAWG_MEMBER_TOKEN = undefined;
-  const message = thrownMessage(() => loadConfig(env));
-
-  expect(message).not.toContain('MANAWG_MEMBER_TOKEN');
   expect(message).not.toContain('MEMBER_SESSION_SECRET');
-});
-
-it('allows bootstrap mode when both member identity values are missing', () => {
-  const env = validEnv();
-  env.MANAWG_MEMBER_ID = undefined;
-  env.MANAWG_MEMBER_TOKEN = undefined;
-  const config = loadConfig(env);
-
-  expect(config.memberId).toBeUndefined();
-  expect(config.memberToken).toBeUndefined();
-  expect(config.identityCachePath).toBe(DEFAULT_IDENTITY_CACHE_PATH);
 });
 
 it('accepts a valid configuration and normalizes the base URL', () => {
@@ -76,22 +48,6 @@ it('derives the Origin header from the base URL', () => {
 
 it('rejects an invalid base URL', () => {
   expect(() => loadConfig({ ...validEnv(), MANAWG_BASE_URL: 'ftp://example.test' })).toThrow();
-});
-
-it('rejects an invalid member UUID', () => {
-  const env = { ...validEnv(), MANAWG_MEMBER_ID: 'not-a-uuid' };
-  const message = thrownMessage(() => loadConfig(env));
-
-  expect(message).not.toContain('MANAWG_MEMBER_ID');
-  expect(message).not.toContain(env.MANAWG_MEMBER_ID);
-});
-
-it('rejects a non-hexadecimal member token', () => {
-  const env = { ...validEnv(), MANAWG_MEMBER_TOKEN: 'g'.repeat(64) };
-  const message = thrownMessage(() => loadConfig(env));
-
-  expect(message).not.toContain('MANAWG_MEMBER_TOKEN');
-  expect(message).not.toContain(env.MANAWG_MEMBER_TOKEN);
 });
 
 it('rejects a non-http Supabase URL without echoing credentials', () => {
@@ -163,17 +119,6 @@ it('honours an explicit session cache path', () => {
   const config = loadConfig({ ...validEnv(), MANAWG_SESSION_CACHE: '/tmp/manawg/session.json' });
 
   expect(config.auth.sessionCachePath).toBe('/tmp/manawg/session.json');
-  expect(config.identityCachePath).toBe('/tmp/manawg/identity.json');
-});
-
-it('honours an explicit identity cache path over the session cache directory', () => {
-  const config = loadConfig({
-    ...validEnv(),
-    MANAWG_SESSION_CACHE: '/tmp/manawg/session.json',
-    MANAWG_IDENTITY_CACHE: '/var/identity.json',
-  });
-
-  expect(config.identityCachePath).toBe('/var/identity.json');
 });
 
 it.each([
@@ -199,8 +144,6 @@ it('trims all environment values before returning the configuration', () => {
     loadConfig({
       MANAWG_BASE_URL: '  https://example.test/  ',
       MANAWG_WG_CODE: '  WG123  ',
-      MANAWG_MEMBER_ID: '  00000000-0000-4000-8000-000000000001  ',
-      MANAWG_MEMBER_TOKEN: `  ${'a'.repeat(64)}  `,
       MANAWG_SUPABASE_URL: '  https://project.supabase.co/  ',
       MANAWG_SUPABASE_PUBLISHABLE_KEY: '  sb_publishable_key_abc  ',
       MANAWG_EMAIL: '  member@example.test  ',
@@ -211,8 +154,6 @@ it('trims all environment values before returning the configuration', () => {
     baseUrl: 'https://example.test',
     origin: 'https://example.test',
     wgCode: 'WG123',
-    memberId: '00000000-0000-4000-8000-000000000001',
-    memberToken: 'a'.repeat(64),
     timeoutMs: 10_000,
     auth: {
       url: 'https://project.supabase.co',
@@ -221,7 +162,6 @@ it('trims all environment values before returning the configuration', () => {
       password: 'correct horse battery',
       sessionCachePath: DEFAULT_SESSION_CACHE_PATH,
     },
-    identityCachePath: DEFAULT_IDENTITY_CACHE_PATH,
     allowDestructive: true,
     transport: 'stdio',
     http: { host: '127.0.0.1', port: 8080, path: '/mcp', cors: false, drainMs: 5000 },
@@ -303,4 +243,16 @@ it.each([
 
   expect(message).toContain(name);
   expect(message).not.toContain(value);
+});
+
+it('ignores the retired member identity variables', () => {
+  const config = loadConfig({
+    ...validEnv(),
+    MANAWG_MEMBER_ID: 'not-a-uuid',
+    MANAWG_MEMBER_TOKEN: 'nope',
+    MANAWG_IDENTITY_CACHE: '/var/identity.json',
+  });
+
+  expect(config).not.toHaveProperty('memberId');
+  expect(config).not.toHaveProperty('identityCachePath');
 });

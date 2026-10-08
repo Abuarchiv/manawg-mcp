@@ -35,14 +35,12 @@ Unit tests, lint and typecheck never need credentials.
 | --- | --- | --- |
 | `MANAWG_BASE_URL` | yes | Origin of the ManaWG app, e.g. `https://manawg.example` |
 | `MANAWG_WG_CODE` | yes | 8-character share code of the household |
-| `MANAWG_MEMBER_ID` + `MANAWG_MEMBER_TOKEN` | no | Identity override; normally bootstrapped from the app (see below) |
 | `MANAWG_SUPABASE_URL` | yes | Supabase project URL behind the app |
 | `MANAWG_SUPABASE_PUBLISHABLE_KEY` | yes | Supabase publishable/anon key |
 | `MANAWG_SUPABASE_REFRESH_TOKEN` | one of | Long-lived refresh token for sign-in |
 | `MANAWG_EMAIL` + `MANAWG_PASSWORD` | one of | Password sign-in instead of a refresh token |
 | `MANAWG_ALLOW_DESTRUCTIVE` | no | `1`/`true` registers destructive tools (default off) |
 | `MANAWG_SESSION_CACHE` | no | Session cache path (default `~/.config/manawg-mcp/session.json`) |
-| `MANAWG_IDENTITY_CACHE` | no | Bootstrapped identity cache (default `~/.config/manawg-mcp/identity.json`) |
 | `MANAWG_TRANSPORT` | no | `stdio` (default) or `http` |
 | `MANAWG_HTTP_HOST` | no | Bind address for `http` (default `127.0.0.1`, `0.0.0.0` in the container) |
 | `MANAWG_HTTP_PORT` | no | Port for `http` (default `8080`) |
@@ -51,23 +49,24 @@ Unit tests, lint and typecheck never need credentials.
 | `MANAWG_HTTP_CORS` | no | `1` allows any browser origin to call the endpoint (default off) |
 | `MANAWG_DRAIN_MS` | no | Milliseconds `/ready` reports `503` before shutdown (default 5000) |
 
-Only `MANAWG_WG_CODE` and one sign-in mode have to be filled in by hand.
+Only `MANAWG_WG_CODE` and one sign-in mode have to be filled in by hand. `MANAWG_MEMBER_ID`,
+`MANAWG_MEMBER_TOKEN` and `MANAWG_IDENTITY_CACHE` from older versions are ignored: the app derives
+the acting member from the session.
 
 ## Auth model
 
 The web app guards every `/api/wg/[code]` route with a live Supabase session and an
-`Origin` check, so member headers alone are not enough. The server therefore:
+`Origin` check, and resolves the acting member from that session. The server therefore:
 
 1. signs in with the refresh token or the email/password pair,
 2. stores the session in `session.json` (mode `0600`) and refreshes it before it expires,
 3. serializes it into `sb-<project>-auth-token` cookies exactly the way `@supabase/ssr`
    expects (3180-byte chunks for long sessions),
-4. reads `memberId` (and `memberToken` when the deployed app returns one) from
-   `GET /api/wg/[code]` once the session works and caches it in `identity.json` (mode `0600`),
-   skipping the request when `MANAWG_MEMBER_ID` and `MANAWG_MEMBER_TOKEN` are both set in the
-   environment,
-5. sends `Origin: <MANAWG_BASE_URL>` and the member headers on every request,
-6. ingests `Set-Cookie` rotations the app returns and retries once on `401 auth_required`.
+4. sends `Origin: <MANAWG_BASE_URL>` and, on writes, a fresh `Idempotency-Key` on every request,
+5. ingests `Set-Cookie` rotations the app returns and retries once on `401 auth_required`.
+
+The `x-manawg-member-*` headers are only sent by `member_claim`, the one legacy route that checks
+them.
 
 ## Host start
 
@@ -81,7 +80,7 @@ node dist/index.js
 Claude Code:
 
 ```bash
-claude mcp add manawg --env-file ~/.config/manawg-mcp/env -- node /Users/abu/Company/manawg-mcp/dist/index.js
+claude mcp add manawg --env-file ~/.config/manawg-mcp/env -- node "$(pwd)/dist/index.js"
 ```
 
 ## Deployment
@@ -119,8 +118,8 @@ docker run -d --name manawg-mcp -p 8080:8080 \
 curl http://127.0.0.1:8080/health
 ```
 
-The image is a multi-stage build, runs as a non-root user, keeps the session and identity caches
-in `/data` (`MANAWG_SESSION_CACHE` and `MANAWG_IDENTITY_CACHE` point there by default) and carries
+The image is a multi-stage build, runs as a non-root user, keeps the session cache
+in `/data` (`MANAWG_SESSION_CACHE` points there by default) and carries
 a `HEALTHCHECK` against `/health`. CI builds and smoke-tests the image on every push; pushing a
 `v*` tag publishes `ghcr.io/abuarchiv/manawg-mcp:<version>` and `:latest` to GHCR.
 
@@ -158,14 +157,14 @@ confirmation.
 
 | Domain | Tools |
 | --- | --- |
-| Overview | `wg_list`, `wg_overview`, `dashboard_get`, `activity_get`, `search`, `export_get` |
+| Overview | `wg_list`, `wg_overview`, `dashboard_get`, `activity_get`, `export_get` |
 | Finance | `expenses_list`, `expense_create`, `expense_update`, `expense_delete`†, `expense_split_settle`, `settlement_preview`, `settlement_commit`, `balances_get`, `reminders_list`, `reminder_send`† |
 | Recurring | `recurring_list`, `recurring_get`, `recurring_advance`, `recurring_create`, `recurring_update`, `recurring_delete`† |
 | Shopping | `shopping_list`, `shopping_add`, `shopping_set_bought`, `shopping_remove`†, `shopping_clear_bought`† |
 | Inventory | `inventory_list`, `inventory_add`, `inventory_update`, `inventory_consume`, `inventory_remove`† |
 | Chores | `chores_list`, `chore_get`, `chore_create`, `chore_update`, `chore_complete`, `chore_delete`† |
 | Notes | `notes_list`, `note_create`, `note_update`, `note_delete`†, `note_comments`, `note_comment`, `note_comment_update`, `note_comment_delete`†, `note_react` |
-| Chat | `chat_messages`, `chat_send`, `chat_edit`, `chat_react`, `chat_mark_read`, `chat_unread`, `chat_delete`† |
+| Chat | `chat_messages`, `chat_send`, `chat_edit`, `chat_react`, `chat_unreact`, `chat_mark_read`, `chat_unread`, `chat_delete`† |
 | Calendar | `events_list`, `event_get`, `event_create`, `event_update`, `event_delete`†, `absences_list`, `absence_create`, `absence_delete`† |
 | Members | `members_list`, `member_get`, `member_update`†, `notifications_get`, `notifications_update`, `wg_update`† |
 | Imports | `import_preview`, `import_commit`† |
@@ -178,6 +177,11 @@ confirmation.
 
 Input schemas mirror the API contract (money in `amountCents`, ISO datetimes with offset, split
 counts, lengths). Every tool returns the route payload as text plus `structuredContent`.
+`export_get` with `format: csv` returns `{ contentType, content }`.
+
+To book a due recurring charge, call `expense_create` with `recurringExpenseId` and
+`expectedRecurringNextDueAt` (the template's `nextDueAt`): the app creates the expense and advances
+the template atomically. `recurring_advance` only moves `nextDueAt`.
 
 For `chore_complete`, read `chores_list` first and pass `nextDueAt` as `expectedNextDueAt` and
 `assignedMemberId` (UUID or null) as `expectedAssignedMemberId`. For `shopping_set_bought`, read
@@ -217,7 +221,7 @@ feed secret), push subscription endpoints, `test_notification` and WG deletion. 
 ```bash
 pnpm lint        # biome check
 pnpm typecheck   # tsc --noEmit
-pnpm test        # vitest (121 tests, no credentials needed)
+pnpm test        # vitest (170 tests incl. an end-to-end run against a local stub app, no credentials needed)
 pnpm build       # tsc to dist/
 pnpm smoke       # stdio handshake against dist/: tools, resources, templates, prompts, gate
 pnpm inspector   # MCP Inspector (web UI) against dist/index.js

@@ -61,9 +61,9 @@ export const inventoryTools = [
     name: 'inventory_consume',
     title: 'Bestand abbuchen',
     description:
-      'delta strikt -100..0 (z. B. -1 für ein Stück entnommen). Antwort mit clamped (true wenn auf 0 begrenzt) und autoPushedShoppingItemId (Bestellvorschlag). 409 version_conflict bei gleichzeitiger Änderung.',
+      'delta -100..-1 (z. B. -1 für ein Stück entnommen). Antwort mit clamped (true wenn auf 0 begrenzt) und autoPushedShoppingItemId (Bestellvorschlag). 409 version_conflict bei gleichzeitiger Änderung.',
     method: 'POST',
-    input: z.strictObject({ id: uuid, delta: z.number().int().min(-100).max(0) }),
+    input: z.strictObject({ id: uuid, delta: z.number().int().min(-100).max(-1) }),
     path: (input) => ['inventory', input.id, 'consume'],
     body: (input) => ({ delta: input.delta }),
   }),

@@ -1,13 +1,10 @@
-import { randomUUID } from 'node:crypto';
-import { readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { type IncomingMessage, type ServerResponse, createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { SessionController } from '../src/auth.js';
 import type { AppConfig } from '../src/config.js';
-import { ManaWgError, type WgRequest, createManaWgClient } from '../src/manawg-client.js';
+import { ManaWgError } from '../src/errors.js';
+import { type WgRequest, createManaWgClient } from '../src/manawg-client.js';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -15,8 +12,6 @@ const validConfig: AppConfig = {
   baseUrl: 'https://example.test',
   origin: 'https://example.test',
   wgCode: 'WG123',
-  memberId: '00000000-0000-4000-8000-000000000001',
-  memberToken: 'a'.repeat(64),
   timeoutMs: 10_000,
   auth: {
     url: 'https://project.supabase.co',
@@ -25,11 +20,12 @@ const validConfig: AppConfig = {
     password: 'correct horse battery',
     sessionCachePath: '/tmp/manawg-mcp-test-session.json',
   },
-  identityCachePath: '/tmp/manawg-mcp-test-identity.json',
   allowDestructive: false,
   transport: 'stdio',
   http: { host: '127.0.0.1', port: 8080, path: '/mcp', cors: false, drainMs: 5000 },
 };
+
+const SECRET = 'a'.repeat(64);
 
 const cleanup: Array<() => Promise<void>> = [];
 
@@ -83,7 +79,7 @@ async function errorCode(promise: Promise<unknown>): Promise<string> {
   throw new Error('Expected promise to reject');
 }
 
-it('sends member headers, origin and reads dashboard JSON', async () => {
+it('sends the origin, no member headers, and reads dashboard JSON', async () => {
   const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ openShopping: [] }));
   const client = createManaWgClient(validConfig, fetchMock);
 
@@ -95,8 +91,8 @@ it('sends member headers, origin and reads dashboard JSON', async () => {
   );
 
   const headers = fetchMock.mock.calls[0]?.[1]?.headers as Headers;
-  expect(headers.get('x-manawg-member-id')).toBe(validConfig.memberId);
-  expect(headers.get('x-manawg-member-token')).toBe(validConfig.memberToken);
+  expect(headers.get('x-manawg-member-id')).toBeNull();
+  expect(headers.get('x-manawg-member-token')).toBeNull();
   expect(headers.get('origin')).toBe(validConfig.origin);
   expect(headers.get('cookie')).toBeNull();
 });
@@ -254,7 +250,7 @@ it.each([
 ] as const)('does not retry HTTP %i writes and returns the safe code', async (status, code) => {
   const fetchMock = vi
     .fn<typeof fetch>()
-    .mockResolvedValue(jsonResponse({ error: `secret:${validConfig.memberToken}`, code }, status));
+    .mockResolvedValue(jsonResponse({ error: `secret:${SECRET}`, code }, status));
   const client = createManaWgClient(validConfig, fetchMock);
 
   const thrown = await client
@@ -265,7 +261,7 @@ it.each([
   expect(fetchMock).toHaveBeenCalledTimes(1);
   expect(thrown).toBeInstanceOf(ManaWgError);
   expect((thrown as ManaWgError).code).toBe(code);
-  expect(String((thrown as ManaWgError).message)).not.toContain(validConfig.memberToken);
+  expect(String((thrown as ManaWgError).message)).not.toContain(SECRET);
 });
 
 it('retries a rate-limited write with the same key and surfaces the safe code', async () => {
@@ -290,7 +286,7 @@ it('retries a rate-limited write with the same key and surfaces the safe code', 
 it('falls back to the HTTP status when the upstream error has no stable code', async () => {
   const fetchMock = vi
     .fn<typeof fetch>()
-    .mockResolvedValue(jsonResponse({ error: `secret:${validConfig.memberToken}` }, 500));
+    .mockResolvedValue(jsonResponse({ error: `secret:${SECRET}` }, 500));
   const client = createManaWgClient(validConfig, fetchMock, undefined, { retryDelaysMs: [1, 1] });
 
   expect(await errorCode(client.call({ path: ['dashboard'] }))).toBe('internal_error');
@@ -300,9 +296,7 @@ it('falls back to the HTTP status when the upstream error has no stable code', a
 it('falls back to the HTTP status when the upstream code is unknown or secret-bearing', async () => {
   const fetchMock = vi
     .fn<typeof fetch>()
-    .mockResolvedValue(
-      jsonResponse({ error: 'conflict', code: `secret:${validConfig.memberToken}` }, 409),
-    );
+    .mockResolvedValue(jsonResponse({ error: 'conflict', code: `secret:${SECRET}` }, 409));
   const client = createManaWgClient(validConfig, fetchMock);
 
   const code = await errorCode(
@@ -310,7 +304,7 @@ it('falls back to the HTTP status when the upstream code is unknown or secret-be
   );
 
   expect(code).toBe('upstream_http_409');
-  expect(code).not.toContain(validConfig.memberToken);
+  expect(code).not.toContain(SECRET);
 });
 
 it('keeps retry-after seconds from rate limits', async () => {
@@ -357,7 +351,7 @@ it('sanitizes response body read failures', async () => {
   const fetchMock = vi.fn<typeof fetch>().mockResolvedValue({
     ok: false,
     status: 500,
-    json: vi.fn().mockRejectedValue(new Error(`secret:${validConfig.memberToken}`)),
+    json: vi.fn().mockRejectedValue(new Error(`secret:${SECRET}`)),
     clone() {
       return this;
     },
@@ -368,15 +362,13 @@ it('sanitizes response body read failures', async () => {
 });
 
 it('sanitizes thrown transport errors', async () => {
-  const fetchMock = vi
-    .fn<typeof fetch>()
-    .mockRejectedValue(new Error(`network:${validConfig.memberToken}`));
+  const fetchMock = vi.fn<typeof fetch>().mockRejectedValue(new Error(`network:${SECRET}`));
   const client = createManaWgClient(validConfig, fetchMock, undefined, { retryDelaysMs: [1, 1] });
 
   const code = await errorCode(client.call({ path: ['dashboard'] }));
 
   expect(code).toBe('upstream_network_error');
-  expect(code).not.toContain(validConfig.memberToken);
+  expect(code).not.toContain(SECRET);
 });
 
 it('retries once on an auth-required 401 with a fresh cookie', async () => {
@@ -440,149 +432,62 @@ it('builds requests for every registered write method', async () => {
   ]);
 });
 
-function bootstrapConfig(): { config: AppConfig; identityPath: string } {
-  const identityPath = join(tmpdir(), `manawg-mcp-identity-${randomUUID()}.json`);
-  cleanup.push(async () => {
-    rmSync(identityPath, { force: true });
-  });
-  const { memberId: _memberId, memberToken: _memberToken, ...rest } = validConfig;
-  return { config: { ...rest, identityCachePath: identityPath }, identityPath };
-}
-
-const BOOTSTRAP_MEMBER_ID = '00000000-0000-4000-8000-000000000007';
-const BOOTSTRAP_MEMBER_TOKEN = 'b'.repeat(64);
-
-it('bootstraps the member identity from the WG root when it is not configured', async () => {
-  const { config, identityPath } = bootstrapConfig();
-  const fetchMock = vi
-    .fn<typeof fetch>()
-    .mockResolvedValueOnce(
-      jsonResponse({
-        currentMember: { memberId: BOOTSTRAP_MEMBER_ID, memberToken: BOOTSTRAP_MEMBER_TOKEN },
-      }),
-    )
-    .mockResolvedValueOnce(jsonResponse({ openShopping: [] }));
-  const client = createManaWgClient(config, fetchMock);
-
-  await expect(client.call({ path: ['dashboard'] })).resolves.toEqual({ openShopping: [] });
-
-  expect(fetchMock).toHaveBeenCalledTimes(2);
-  expect(fetchMock.mock.calls[0]?.[0]).toBe('https://example.test/api/wg/WG123');
-  const bootstrapHeaders = fetchMock.mock.calls[0]?.[1]?.headers as Headers;
-  expect(bootstrapHeaders.get('x-manawg-member-id')).toBeNull();
-  expect(bootstrapHeaders.get('origin')).toBe(config.origin);
-
-  const headers = fetchMock.mock.calls[1]?.[1]?.headers as Headers;
-  expect(headers.get('x-manawg-member-id')).toBe(BOOTSTRAP_MEMBER_ID);
-  expect(headers.get('x-manawg-member-token')).toBe(BOOTSTRAP_MEMBER_TOKEN);
-
-  expect(JSON.parse(readFileSync(identityPath, 'utf8'))).toEqual({
-    memberId: BOOTSTRAP_MEMBER_ID,
-    memberToken: BOOTSTRAP_MEMBER_TOKEN,
-  });
-  expect(statSync(identityPath).mode & 0o777).toBe(0o600);
-});
-
-it('reuses a cached member identity without a second bootstrap', async () => {
-  const { config, identityPath } = bootstrapConfig();
-  writeFileSync(
-    identityPath,
-    JSON.stringify({ memberId: BOOTSTRAP_MEMBER_ID, memberToken: BOOTSTRAP_MEMBER_TOKEN }),
-  );
-  const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ openShopping: [] }));
-  const client = createManaWgClient(config, fetchMock);
-
-  await expect(client.call({ path: ['dashboard'] })).resolves.toEqual({ openShopping: [] });
-
-  expect(fetchMock).toHaveBeenCalledTimes(1);
-  const headers = fetchMock.mock.calls[0]?.[1]?.headers as Headers;
-  expect(headers.get('x-manawg-member-id')).toBe(BOOTSTRAP_MEMBER_ID);
-});
-
-it('sends the member id without a token when the WG root returns no member token', async () => {
-  const { config, identityPath } = bootstrapConfig();
-  const fetchMock = vi
-    .fn<typeof fetch>()
-    .mockResolvedValueOnce(jsonResponse({ currentMember: { memberId: BOOTSTRAP_MEMBER_ID } }))
-    .mockResolvedValueOnce(jsonResponse({ openShopping: [] }));
-  const client = createManaWgClient(config, fetchMock);
-
-  await expect(client.call({ path: ['dashboard'] })).resolves.toEqual({ openShopping: [] });
-
-  expect(fetchMock).toHaveBeenCalledTimes(2);
-  const headers = fetchMock.mock.calls[1]?.[1]?.headers as Headers;
-  expect(headers.get('x-manawg-member-id')).toBe(BOOTSTRAP_MEMBER_ID);
-  expect(headers.get('x-manawg-member-token')).toBeNull();
-  expect(headers.get('origin')).toBe(config.origin);
-  expect(JSON.parse(readFileSync(identityPath, 'utf8'))).toEqual({
-    memberId: BOOTSTRAP_MEMBER_ID,
-  });
-});
-
-it('keeps calling through a transient bootstrap failure and retries it next call', async () => {
-  const { config } = bootstrapConfig();
-  const fetchMock = vi
-    .fn<typeof fetch>()
-    .mockRejectedValueOnce(new Error('flaky'))
-    .mockResolvedValueOnce(jsonResponse({ openShopping: [] }))
-    .mockResolvedValueOnce(
-      jsonResponse({
-        currentMember: { memberId: BOOTSTRAP_MEMBER_ID, memberToken: BOOTSTRAP_MEMBER_TOKEN },
-      }),
-    )
-    .mockResolvedValueOnce(jsonResponse({ openShopping: [] }));
-  const client = createManaWgClient(config, fetchMock, undefined, { retryDelaysMs: [] });
-
-  await expect(client.call({ path: ['dashboard'] })).resolves.toEqual({ openShopping: [] });
-  await expect(client.call({ path: ['dashboard'] })).resolves.toEqual({ openShopping: [] });
-
-  expect(fetchMock).toHaveBeenCalledTimes(4);
-  const headers = fetchMock.mock.calls[3]?.[1]?.headers as Headers;
-  expect(headers.get('x-manawg-member-id')).toBe(BOOTSTRAP_MEMBER_ID);
-});
-
-it('settles on a tokenless identity so later calls skip the bootstrap', async () => {
-  const { config } = bootstrapConfig();
-  const fetchMock = vi
-    .fn<typeof fetch>()
-    .mockResolvedValue(jsonResponse({ currentMember: { memberId: BOOTSTRAP_MEMBER_ID } }));
-  const client = createManaWgClient(config, fetchMock);
-
-  await client.call({ path: ['dashboard'] });
-  await client.call({ path: ['shopping'] });
-
-  expect(fetchMock).toHaveBeenCalledTimes(3);
-});
-
-it('addresses account routes without the WG code and skips identity bootstrap', async () => {
-  const { config } = bootstrapConfig();
+it('addresses account routes without the WG code', async () => {
   const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ wgs: [] }));
-  const client = createManaWgClient(config, fetchMock);
+  const client = createManaWgClient(validConfig, fetchMock);
 
   await expect(client.call({ path: ['mine'], scope: 'account' })).resolves.toEqual({ wgs: [] });
 
   expect(fetchMock).toHaveBeenCalledTimes(1);
   expect(fetchMock.mock.calls[0]?.[0]).toBe('https://example.test/api/wg/mine');
-  const headers = fetchMock.mock.calls[0]?.[1]?.headers as Headers;
-  expect(headers.get('x-manawg-member-id')).toBeNull();
-  expect(headers.get('origin')).toBe(config.origin);
 });
 
-it('still sends the member headers on WG-scoped requests after an account call', async () => {
-  const { config } = bootstrapConfig();
+it('addresses the bare account collection when the path is empty', async () => {
+  const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ wg: {} }));
+  const client = createManaWgClient(validConfig, fetchMock);
+
+  await client.call({ path: [], scope: 'account', method: 'POST', body: { name: 'WG' } });
+
+  expect(fetchMock.mock.calls[0]?.[0]).toBe('https://example.test/api/wg');
+});
+
+it('forwards per-request headers', async () => {
+  const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ ok: true }));
+  const client = createManaWgClient(validConfig, fetchMock);
+
+  await client.call({
+    path: ['members', 'm1', 'claim'],
+    method: 'POST',
+    headers: { 'x-test': '1' },
+  });
+
+  const headers = fetchMock.mock.calls[0]?.[1]?.headers as Headers;
+  expect(headers.get('x-test')).toBe('1');
+});
+
+it('returns a CSV body as text instead of dropping it', async () => {
   const fetchMock = vi
     .fn<typeof fetch>()
-    .mockResolvedValueOnce(jsonResponse({ wgs: [] }))
-    .mockResolvedValueOnce(jsonResponse({ currentMember: { memberId: BOOTSTRAP_MEMBER_ID } }))
-    .mockResolvedValueOnce(jsonResponse({ openShopping: [] }));
-  const client = createManaWgClient(config, fetchMock);
+    .mockResolvedValue(
+      new Response('id,name\n1,Anna\n', { headers: { 'content-type': 'text/csv; charset=utf-8' } }),
+    );
+  const client = createManaWgClient(validConfig, fetchMock);
 
-  await client.call({ path: ['mine'], scope: 'account' });
-  await client.call({ path: ['dashboard'] });
+  await expect(client.call({ path: ['export'], query: { format: 'csv' } })).resolves.toEqual({
+    contentType: 'text/csv; charset=utf-8',
+    content: 'id,name\n1,Anna\n',
+  });
+});
 
-  expect(fetchMock.mock.calls[2]?.[0]).toBe('https://example.test/api/wg/WG123/dashboard');
-  const headers = fetchMock.mock.calls[2]?.[1]?.headers as Headers;
-  expect(headers.get('x-manawg-member-id')).toBe(BOOTSTRAP_MEMBER_ID);
+it('makes a rarely used upstream code visible instead of hiding it', async () => {
+  const fetchMock = vi
+    .fn<typeof fetch>()
+    .mockResolvedValue(jsonResponse({ error: 'x', code: 'chore_changed' }, 409));
+  const client = createManaWgClient(validConfig, fetchMock);
+
+  expect(await errorCode(client.call({ path: ['chores', '1'], method: 'PATCH', body: {} }))).toBe(
+    'chore_changed',
+  );
 });
 
 it('waits out a short rate limit and succeeds on the next attempt', async () => {

@@ -1,7 +1,13 @@
 import { z } from 'zod';
+import { isMemberToken } from '../ids.js';
+import { uuid } from './shared.js';
 import { defineTool } from './types.js';
 
-import { uuid } from './shared.js';
+const legacyMemberToken = z
+  .string()
+  .trim()
+  .refine(isMemberToken, { message: 'expected 64 hex characters' });
+
 const importSource = z.enum(['splitwise_csv', 'splid_csv', 'ocr_text']);
 
 export const householdTools = [
@@ -9,7 +15,7 @@ export const householdTools = [
     name: 'calendar_subscription_get',
     title: 'Kalender-Abo lesen',
     description:
-      'Eigene Kalender-Subscription der WG: feedUrl, token, createdAt und revokedAt — oder subscription null, wenn keine existiert. Die feedUrl in eine Kalender-App abonnieren; sie enthält einen Geheimtoken und wird deshalb nie in Chats geteilt.',
+      'Eigene Kalender-Subscription der WG: subscription { feedUrl, createdAt, updatedAt } — oder subscription null, wenn keine aktive existiert. Die feedUrl in eine Kalender-App abonnieren; sie enthält einen Geheimtoken und wird deshalb nie in Chats geteilt.',
     method: 'GET',
     input: z.strictObject({}),
     path: () => ['calendar-subscription'],
@@ -73,25 +79,29 @@ export const householdTools = [
     name: 'member_claim',
     title: 'Mitglied mit Account verknüpfen',
     description:
-      'Verknüpft das angemeldete Konto dauerhaft mit dem Mitglied id (legacy_member_token wird mitsgesendet). Scheitert mit account_already_linked, member_already_linked oder member_deactivated; nach dem Claim ist der Account-Inhaber dieses Mitglied.',
+      'Verknüpft das angemeldete Konto dauerhaft mit einem Altbestands-Mitglied (id). Dafür braucht die App den Legacy-Beweis legacyMemberToken, den nur das Mitglied aus seinem alten Einladungslink kennt; ohne gültigen Beweis legacy_proof_required. Weitere Fehler: account_already_linked, member_already_linked, member_deactivated. Danach ist der Account-Inhaber dieses Mitglied.',
     method: 'POST',
     gate: 'destructive',
-    input: z.strictObject({ id: uuid }),
+    input: z.strictObject({ id: uuid, legacyMemberToken }),
     path: (input) => ['members', input.id, 'claim'],
+    headers: (input) => ({
+      'x-manawg-member-id': input.id,
+      'x-manawg-member-token': input.legacyMemberToken,
+    }),
   }),
   defineTool({
     name: 'wg_create',
     title: 'Neue WG anlegen',
     description:
-      'Legt eine neue WG an (name 1..100, creatorName 1..100) und liefert wg.shareCode sowie creator.token zurück. Account-scoped, hängt aber nicht an die aktuelle WG; anschließend mit MANAWG_WG_CODE neu verbinden, um sie zu nutzen. 3 Anfragen pro Stunde (wg_create_rate_limited).',
+      'Legt eine neue WG an (name 1..100, creatorName 1..80) und liefert wg { id, shareCode, name } sowie creator { id, name } zurück. Account-scoped, hängt aber nicht an die aktuelle WG; anschließend mit MANAWG_WG_CODE neu verbinden, um sie zu nutzen. 3 Anfragen pro Stunde (wg_create_rate_limited).',
     method: 'POST',
     gate: 'destructive',
     scope: 'account',
     input: z.strictObject({
       name: z.string().trim().min(1).max(100),
-      creatorName: z.string().trim().min(1).max(100),
+      creatorName: z.string().trim().min(1).max(80),
     }),
-    path: () => ['wg'],
+    path: () => [],
     body: (input) => input,
   }),
 ];

@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { type IncomingMessage, type Server, type ServerResponse, createServer } from 'node:http';
 import { type McpServer, createMcpHandler } from '@modelcontextprotocol/server';
-import { serverVersion } from './server.js';
+import { serverVersion } from './version.js';
 
 export type HttpServerOptions = {
   host: string;

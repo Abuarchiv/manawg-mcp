@@ -10,7 +10,7 @@ export const shoppingTools = [
     name: 'shopping_list',
     title: 'Einkaufsliste lesen',
     description:
-      'Offene und gekaufte Artikel (max 1000), sortiert nach boughtAt. Enthält addedBy/addedByName, boughtBy, boughtAt und updatedAt; beide Zeitstempel für shopping_set_bought verwenden.',
+      'Alle offenen Artikel (älteste zuerst) gefolgt von bis zu 1000 zuletzt gekauften. Enthält addedBy/addedByName, boughtBy, boughtAt und updatedAt; beide Zeitstempel für shopping_set_bought verwenden.',
     method: 'GET',
     input: z.strictObject({}),
     path: () => ['shopping'],
@@ -51,7 +51,8 @@ export const shoppingTools = [
   defineTool({
     name: 'shopping_remove',
     title: 'Einkaufsartikel entfernen',
-    description: 'Entfernt einen Artikel. Erlaubt nur für die eintragende Person (not_owner).',
+    description:
+      'Entfernt einen Artikel. Erlaubt für die eintragende Person oder einen Admin (sonst not_owner); unbekannte id: item_not_found.',
     method: 'DELETE',
     gate: 'destructive',
     input: z.strictObject({ id: uuid }),

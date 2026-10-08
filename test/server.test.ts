@@ -1,7 +1,7 @@
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { afterEach, expect, it, vi } from 'vitest';
-import { ManaWgError } from '../src/manawg-client.js';
+import { ManaWgError } from '../src/errors.js';
 import { buildServer } from '../src/server.js';
 import { TOOL_DEFS, selectTools } from '../src/tools/registry.js';
 
@@ -456,12 +456,12 @@ it('routes the new read tools to their routes', async () => {
 
   await client.callTool({
     name: 'recurring_advance',
-    arguments: { id: VALID_ID, amountCents: 1200 },
+    arguments: { id: VALID_ID, expectedNextDueAt: '2026-11-01T00:00:00Z' },
   });
   expect(fake.call).toHaveBeenLastCalledWith({
     method: 'PATCH',
     path: ['recurring-expenses'],
-    body: { id: VALID_ID, amountCents: 1200 },
+    body: { id: VALID_ID, expectedNextDueAt: '2026-11-01T00:00:00Z' },
   });
 });
 
@@ -644,11 +644,12 @@ it('routes coverage tools per scope with their bodies', async () => {
 
   await client.callTool({
     name: 'member_claim',
-    arguments: { id: VALID_ID },
+    arguments: { id: VALID_ID, legacyMemberToken: 'c'.repeat(64) },
   });
   expect(fake.call).toHaveBeenLastCalledWith({
     method: 'POST',
     path: ['members', VALID_ID, 'claim'],
+    headers: { 'x-manawg-member-id': VALID_ID, 'x-manawg-member-token': 'c'.repeat(64) },
   });
 
   await client.callTool({
@@ -657,7 +658,7 @@ it('routes coverage tools per scope with their bodies', async () => {
   });
   expect(fake.call).toHaveBeenLastCalledWith({
     method: 'POST',
-    path: ['wg'],
+    path: [],
     scope: 'account',
     body: { name: 'Zweite WG', creatorName: 'Ada' },
   });

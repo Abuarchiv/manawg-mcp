@@ -87,13 +87,13 @@ WICHTIG: Nur den Entwurf zurückgeben. reminder_send nicht aufrufen, bevor der N
     () => `Schlage den minimalen Geldausgleich zwischen den Mitgliedern vor.
 
 Vorgehen:
-1. balances_get für die aktuellen Salden.
-2. settlement_preview für die vom Server vorgeschlagenen Überweisungen.
+1. dashboard_get (balances) für die Salden der ganzen WG; balances_get zeigt nur, was dem Aufrufenden geschuldet wird.
+2. settlement_preview je Richtung (fromMemberId → toMemberId) für den vom Server berechneten Ausgleich.
 
 Ausgabe (deutsch):
 - Tabelle: von → Betrag → an
 - Anzahl der Überweisungen und ob sie die Mindestsumme unterschreiten
-- Abweichungen zwischen balances_get und settlement_preview erklären
+- Abweichungen zwischen dashboard_get und settlement_preview erklären
 
 WICHTIG: settlement_commit nicht aufrufen. Der Plan wird nur vorgeschlagen, die Ausführung braucht eine ausdrückliche Freigabe.`,
   ),

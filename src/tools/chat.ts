@@ -23,13 +23,13 @@ export const chatTools = [
     name: 'chat_send',
     title: 'Chatnachricht senden',
     description:
-      'Schreibt in den WG-Chat als eingeloggtes Mitglied. body bis 4000 Zeichen oder imageUrl; beides leer ist nicht erlaubt (empty_message). replyToMessageId und mentionMemberIds (uuid[]) optional.',
+      'Schreibt in den WG-Chat als eingeloggtes Mitglied. body bis 4000 Zeichen oder imageUrl; beides leer ist nicht erlaubt (empty_message). replyToMessageId und mentionMemberIds (uuid[], max 20) optional. imageUrl muss eine von der App ausgestellte Upload-URL sein (sonst image_invalid; gelöschte Uploads image_removed).',
     method: 'POST',
     input: z.strictObject({
       body: body.optional(),
       imageUrl,
       replyToMessageId: uuid.optional(),
-      mentionMemberIds: z.array(uuid).max(50).optional(),
+      mentionMemberIds: z.array(uuid).max(20).optional(),
     }),
     path: () => ['chat', 'messages'],
     body: (input) => input,
@@ -38,7 +38,7 @@ export const chatTools = [
     name: 'chat_edit',
     title: 'Chatnachricht bearbeiten',
     description:
-      'Nur eigene Nachrichten (not_owner) und nur innerhalb von 15 Minuten nach Versand (edit window).',
+      'Nur eigene Textnachrichten und nur innerhalb von 15 Minuten nach Versand (edit window); sonst 403 edit_not_allowed. Unbekannte Nachricht: message_not_found.',
     method: 'PATCH',
     input: z.strictObject({ id: uuid, body }),
     path: (input) => ['chat', 'messages', input.id],
@@ -48,11 +48,21 @@ export const chatTools = [
     name: 'chat_react',
     title: 'Chatreaktion setzen',
     description:
-      'Emoji-Reaktion an-/abwählen (toggle). Auf gelöschte Nachrichten: 409 message_deleted.',
+      'Fügt eine Emoji-Reaktion hinzu (genau ein Emoji, sonst emoji_invalid); ist sie schon gesetzt, bleibt es dabei. Entfernen mit chat_unreact. Auf gelöschte Nachrichten: 409 message_deleted.',
     method: 'POST',
     input: z.strictObject({ id: uuid, emoji: z.string().trim().min(1).max(16) }),
     path: (input) => ['chat', 'messages', input.id, 'reactions'],
     body: (input) => ({ emoji: input.emoji }),
+  }),
+  defineTool({
+    name: 'chat_unreact',
+    title: 'Chatreaktion entfernen',
+    description:
+      'Nimmt die eigene Emoji-Reaktion von einer Nachricht zurück (dasselbe Emoji wie bei chat_react). Auf gelöschte Nachrichten: 409 message_deleted.',
+    method: 'DELETE',
+    input: z.strictObject({ id: uuid, emoji: z.string().trim().min(1).max(16) }),
+    path: (input) => ['chat', 'messages', input.id, 'reactions'],
+    query: (input) => ({ emoji: input.emoji }),
   }),
   defineTool({
     name: 'chat_mark_read',
@@ -76,7 +86,7 @@ export const chatTools = [
     name: 'chat_delete',
     title: 'Chatnachricht löschen',
     description:
-      'Entfernt die Nachricht für alle; Text und Bild werden aus der Anzeige gestript. Erlaubt für Autor (geprüfte Identität).',
+      'Entfernt die Nachricht für alle; Text und Bild werden aus der Anzeige gestript. Erlaubt für den Autor oder einen Admin; erneutes Löschen ist harmlos.',
     method: 'DELETE',
     gate: 'destructive',
     input: z.strictObject({ id: uuid }),

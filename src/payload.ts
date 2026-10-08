@@ -26,9 +26,22 @@ function largestArrayField(record: Record<string, unknown>): string | undefined 
   return name;
 }
 
+function largestStringField(record: Record<string, unknown>): string | undefined {
+  let name: string | undefined;
+  let size = 1;
+  for (const [key, value] of Object.entries(record)) {
+    if (typeof value === 'string' && value.length > size) {
+      name = key;
+      size = value.length;
+    }
+  }
+  return name;
+}
+
 /**
  * Bounds a route payload before it reaches the model: per-field item caps first,
- * then a byte cap that halves the largest array until the JSON fits. Truncation
+ * then a byte cap that halves the largest array (or, failing that, the largest
+ * string such as a CSV export) until the JSON fits. Truncation
  * is always announced through the `_mcp` marker — data is never silently cut.
  */
 export function capPayload(payload: unknown, limits: PayloadLimits): CapResult {
@@ -54,6 +67,14 @@ export function capPayload(payload: unknown, limits: PayloadLimits): CapResult {
     while (json.length > maxBytes) {
       const biggest = largestArrayField(out);
       if (!biggest) {
+        const text = largestStringField(out);
+        if (text) {
+          const value = out[text] as string;
+          out[text] = value.slice(0, Math.max(1, Math.floor(value.length / 2)));
+          fields.add(text);
+          json = JSON.stringify(out);
+          continue;
+        }
         return {
           payload: {
             [META_KEY]: { truncated: true, oversized: true, originalBytes: json.length },

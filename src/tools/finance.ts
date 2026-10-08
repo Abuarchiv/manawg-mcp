@@ -10,6 +10,13 @@ import {
 } from './shared.js';
 import { defineTool } from './types.js';
 
+/** The `settlement_preview` payload; extra keys (remainingCents, expenseId, reason) are tolerated. */
+const settlementPreview = z.looseObject({
+  netCents: z.number().int().min(0),
+  settleableCents: z.number().int().min(0),
+  splits: z.array(z.looseObject({ id: uuid, amountCents: z.number().int().min(0) })).max(500),
+});
+
 export const financeTools = [
   defineTool({
     name: 'expenses_list',
@@ -45,17 +52,29 @@ export const financeTools = [
     name: 'expense_create',
     title: 'Ausgabe anlegen',
     description:
-      'Neue Ausgabe mit Schuldnersplits. amountCents 1..100000000, description max 200, splits 1..50 Einträge, Summe der splits muss exakt amountCents ergeben (error: splits_sum_mismatch). Der Anrufende muss payer oder debtor sein (paid_by_must_include_caller).',
+      'Neue Ausgabe mit Schuldnersplits. amountCents 1..100000000, description max 200, splits 1..50 Einträge, Summe der splits muss exakt amountCents ergeben (error: splits_sum_mismatch). Der Anrufende muss payer oder debtor sein (paid_by_must_include_caller). Eine fällige Fixkosten-Buchung wird hier erfasst: recurringExpenseId und expectedRecurringNextDueAt (nextDueAt aus recurring_get) immer zusammen senden, dann legt die App die Ausgabe an und rückt das Template atomar weiter.',
     method: 'POST',
-    input: z.strictObject({
-      amountCents,
-      description,
-      splits: z.array(splitSchema).min(1).max(50),
-      paidByMemberId: uuid.optional(),
-      currency,
-      occurredAt: isoDateTime.optional(),
-      imageUrl,
-    }),
+    input: z
+      .strictObject({
+        amountCents,
+        description,
+        splits: z.array(splitSchema).min(1).max(50),
+        paidByMemberId: uuid.optional(),
+        currency,
+        occurredAt: isoDateTime.optional(),
+        imageUrl,
+        recurringExpenseId: uuid.optional(),
+        expectedRecurringNextDueAt: isoDateTime.optional(),
+      })
+      .refine(
+        (input) =>
+          (input.recurringExpenseId === undefined) ===
+          (input.expectedRecurringNextDueAt === undefined),
+        {
+          message: 'recurringExpenseId und expectedRecurringNextDueAt nur gemeinsam',
+          path: ['recurringExpenseId'],
+        },
+      ),
     path: () => ['expenses'],
     body: (input) => input,
   }),
@@ -122,22 +141,31 @@ export const financeTools = [
     name: 'settlement_commit',
     title: 'Ausgleich ausführen',
     description:
-      'Setzt mehrere offene splits in einem Schritt als beglichen. expected muss exakt das payload von settlement_preview sein (Felder netCents, settleableCents, splits); sonst 409 settlement_changed — dann neu previewen.',
+      'Setzt mehrere offene splits in einem Schritt als beglichen. expected ist das Ergebnis von settlement_preview unverändert (der MCP reicht nur currency, netCents, settleableCents und splits[id, amountCents] an die App weiter); sonst 409 settlement_changed — dann neu previewen.',
     method: 'POST',
     input: z.strictObject({
       fromMemberId: uuid,
       toMemberId: uuid,
       currency: z.enum(['EUR', 'CHF', 'USD', 'GBP']),
-      expected: z.record(z.string(), z.unknown()),
+      expected: settlementPreview,
     }),
     path: () => ['expenses', 'settle-batch'],
-    body: (input) => input,
+    body: ({ expected, ...rest }) => ({
+      ...rest,
+      // The app rejects unknown keys: keep only what it checks.
+      expected: {
+        currency: rest.currency,
+        netCents: expected.netCents,
+        settleableCents: expected.settleableCents,
+        splits: expected.splits.map(({ id, amountCents }) => ({ id, amountCents })),
+      },
+    }),
   }),
   defineTool({
     name: 'balances_get',
     title: 'Offene Salden lesen',
     description:
-      'Offene Salden je Schuldner: debtor_id, debtor_name, amount_cents, currency, oldest_age_days. Leer, wenn nichts offen ist.',
+      'Offene Forderungen des Aufrufenden (Gläubigersicht): je Schuldner debtor_id, debtor_name, amount_cents, currency, oldest_age_days. Leer, wenn dem Aufrufenden nichts geschuldet wird; Schulden anderer Mitglieder untereinander stehen in dashboard_get.',
     method: 'GET',
     input: z.strictObject({}),
     path: () => ['reminders', 'balances'],
@@ -146,7 +174,7 @@ export const financeTools = [
     name: 'reminders_list',
     title: 'Erinnerungshistorie lesen',
     description:
-      'Versandte Mahnungen der letzten 30 Tage (max 50 Einträge) inklusive Status und Zeitpunkt.',
+      'Versandte Mahnungen der letzten 30 Tage (max 50 Einträge) mit channel, message, amountCents, currency, oldestDebtAgeDays und sentAt.',
     method: 'GET',
     input: z.strictObject({}),
     path: () => ['reminders'],
@@ -155,7 +183,7 @@ export const financeTools = [
     name: 'reminder_send',
     title: 'Mahnung senden',
     description:
-      'Sendet dem Schuldner eine Erinnerung (channel push oder inapp) — benachrichtigt einen Menschen, deshalb nur auf ausdrücklichen Wunsch. Cooldown beachten; 429 wenn zu häufig.',
+      'Sendet dem Schuldner eine Erinnerung (channel push oder inapp) — benachrichtigt einen Menschen, deshalb nur auf ausdrücklichen Wunsch. Nur der Gläubiger oder ein Admin darf senden (not_creditor); ohne offene Schuld no_open_debt, 48 h Cooldown (reminder_cooldown), bei zu häufigem Senden reminder_rate_limited.',
     method: 'POST',
     gate: 'destructive',
     input: z.strictObject({

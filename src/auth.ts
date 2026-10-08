@@ -109,17 +109,18 @@ function isSupabaseSession(value: unknown): value is SupabaseSession {
 }
 
 function normalizeSession(payload: Record<string, unknown>): SupabaseSession | undefined {
-  const expiresInSeconds = Number(payload.expires_in);
-  const expiresAt = Number(payload.expires_at);
+  const expiresIn = Number(payload.expires_in);
+  const expiresAtRaw = Number(payload.expires_at);
+  let expiresAt = 0;
+  if (expiresAtRaw > 0) {
+    expiresAt = expiresAtRaw;
+  } else if (expiresIn > 0) {
+    expiresAt = Math.floor(Date.now() / 1000) + expiresIn;
+  }
   const session: SupabaseSession = {
     access_token: String(payload.access_token ?? ''),
     refresh_token: String(payload.refresh_token ?? ''),
-    expires_at:
-      typeof expiresAt === 'number' && expiresAt > 0
-        ? expiresAt
-        : typeof expiresInSeconds === 'number' && expiresInSeconds > 0
-          ? Math.floor(Date.now() / 1000) + expiresInSeconds
-          : 0,
+    expires_at: expiresAt,
   };
   if (typeof payload.expires_in === 'number') {
     session.expires_in = payload.expires_in;
@@ -131,6 +132,55 @@ function normalizeSession(payload: Record<string, unknown>): SupabaseSession | u
     session.user = payload.user;
   }
   return isSupabaseSession(session) && session.expires_at > 0 ? session : undefined;
+}
+
+/** `name=value` pairs of every `Set-Cookie` header; attributes after `;` are dropped. */
+function parseSetCookies(response: Response): Map<string, string> {
+  const headers =
+    typeof response.headers.getSetCookie === 'function'
+      ? response.headers.getSetCookie()
+      : [response.headers.get('set-cookie') ?? ''];
+  const cookies = new Map<string, string>();
+  for (const header of headers) {
+    const [pair] = header.split(';');
+    const separator = pair ? pair.indexOf('=') : -1;
+    if (!pair || separator < 0) {
+      continue;
+    }
+    const name = pair.slice(0, separator).trim();
+    if (name) {
+      cookies.set(name, pair.slice(separator + 1).trim());
+    }
+  }
+  return cookies;
+}
+
+/**
+ * The session after the app's `Set-Cookie` rotation: an emptied cookie signs the
+ * session out, a (chunked) auth cookie replaces it, anything else leaves it alone.
+ */
+function sessionAfterSetCookies(
+  key: string,
+  cookies: Map<string, string>,
+  current: SupabaseSession | undefined,
+): SupabaseSession | undefined {
+  let next = current;
+
+  if (cookies.has(key)) {
+    const value = cookies.get(key) ?? '';
+    next = value ? (sessionFromCookieValue(value) ?? next) : undefined;
+  }
+
+  if (cookies.has(`${key}.0`)) {
+    const parts: string[] = [];
+    for (let value = cookies.get(`${key}.0`); value !== undefined; ) {
+      parts.push(value);
+      value = cookies.get(`${key}.${parts.length}`);
+    }
+    next = sessionFromCookieValue(parts.join('')) ?? next;
+  }
+
+  return next;
 }
 
 export function createSessionController(
@@ -285,72 +335,20 @@ export function createSessionController(
     return pairs.map((pair) => `${pair.name}=${pair.value}`).join('; ');
   }
 
-  const valuesByName = new Map<string, string>();
-
-  function ingestSetCookies(names: Set<string>): void {
-    let next = session;
-    for (const name of names) {
-      if (name !== key && !name.startsWith(`${key}.`)) {
-        continue;
-      }
-      if (name === key) {
-        const value = valuesByName.get(name) ?? '';
-        if (!value) {
-          next = undefined;
-          continue;
-        }
-        next = sessionFromCookieValue(value) ?? next;
-      }
-    }
-    const chunkPrefix = `${key}.`;
-    const chunked = names.has(`${key}.0`);
-    if (chunked) {
-      const parts: string[] = [];
-      for (let index = 0; ; index += 1) {
-        const value = valuesByName.get(`${chunkPrefix}${index}`);
-        if (value === undefined) {
-          break;
-        }
-        parts.push(value);
-      }
-      if (parts.length > 0) {
-        next = sessionFromCookieValue(parts.join('')) ?? next;
-      }
-    }
-    if (JSON.stringify(next) !== JSON.stringify(session)) {
-      session = next;
-      persist(session);
-    }
-  }
-
   return {
     async cookieHeader(): Promise<string> {
       return cookieHeaderFor(await ensureSession());
     },
 
     async ingest(response: Response): Promise<void> {
-      const setCookies =
-        typeof response.headers.getSetCookie === 'function'
-          ? response.headers.getSetCookie()
-          : [response.headers.get('set-cookie') ?? ''];
-      valuesByName.clear();
-      for (const setCookie of setCookies) {
-        const [pair] = setCookie.split(';');
-        if (!pair) {
-          continue;
-        }
-        const separator = pair.indexOf('=');
-        if (separator < 0) {
-          continue;
-        }
-        const name = pair.slice(0, separator).trim();
-        const value = pair.slice(separator + 1).trim();
-        if (name) {
-          valuesByName.set(name, value);
-        }
+      const cookies = parseSetCookies(response);
+      if (cookies.size === 0) {
+        return;
       }
-      if (valuesByName.size > 0) {
-        ingestSetCookies(new Set(valuesByName.keys()));
+      const next = sessionAfterSetCookies(key, cookies, session);
+      if (JSON.stringify(next) !== JSON.stringify(session)) {
+        session = next;
+        persist(session);
       }
     },
 
