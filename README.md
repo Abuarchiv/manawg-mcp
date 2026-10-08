@@ -221,7 +221,7 @@ feed secret), push subscription endpoints, `test_notification` and WG deletion. 
 ```bash
 pnpm lint        # biome check
 pnpm typecheck   # tsc --noEmit
-pnpm test        # vitest (170 tests incl. an end-to-end run against a local stub app, no credentials needed)
+pnpm test        # vitest: whole-flow regression tests against a stateful stub app, API-surface check, a few unit tests (no credentials needed)
 pnpm build       # tsc to dist/
 pnpm smoke       # stdio handshake against dist/: tools, resources, templates, prompts, gate
 pnpm inspector   # MCP Inspector (web UI) against dist/index.js

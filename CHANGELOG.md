@@ -26,8 +26,13 @@
 ### Added
 
 - `chat_unreact` (DELETE of an own reaction) — the only way to undo `chat_react`.
-- End-to-end test (`test/e2e.test.ts`) running the real session controller, client and MCP server
-  against a local stub that enforces Origin, the Supabase cookie and idempotency keys.
+- Regression flows (`test/flows.test.ts`) running the real session controller, client and MCP server
+  against a stateful stub app (`test/helpers/app.ts`) that enforces Origin, the Supabase cookie,
+  idempotency keys, optimistic locking and strict bodies: session lifecycle, shopping, chores,
+  expense → settlement, chat reactions, retries, rate limits, payload bounds, CSV export.
+- API surface check (`test/api-surface.test.ts`): every tool and resource must map to a route in
+  `test/fixtures/app-routes.json`, a snapshot of the app's `/api/wg` routes.
+- Trimmed the unit tests that only restated single paths, defaults or schema limits.
 
 ### Changed
 

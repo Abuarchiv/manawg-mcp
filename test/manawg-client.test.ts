@@ -4,9 +4,9 @@ import { afterEach, expect, it, vi } from 'vitest';
 import type { SessionController } from '../src/auth.js';
 import type { AppConfig } from '../src/config.js';
 import { ManaWgError } from '../src/errors.js';
-import { type WgRequest, createManaWgClient } from '../src/manawg-client.js';
+import { createManaWgClient } from '../src/manawg-client.js';
 
-const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const _UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const validConfig: AppConfig = {
   baseUrl: 'https://example.test',
@@ -79,24 +79,6 @@ async function errorCode(promise: Promise<unknown>): Promise<string> {
   throw new Error('Expected promise to reject');
 }
 
-it('sends the origin, no member headers, and reads dashboard JSON', async () => {
-  const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ openShopping: [] }));
-  const client = createManaWgClient(validConfig, fetchMock);
-
-  await expect(client.call({ path: ['dashboard'] })).resolves.toEqual({ openShopping: [] });
-
-  expect(fetchMock).toHaveBeenCalledWith(
-    'https://example.test/api/wg/WG123/dashboard',
-    expect.objectContaining({ headers: expect.any(Headers), signal: expect.any(AbortSignal) }),
-  );
-
-  const headers = fetchMock.mock.calls[0]?.[1]?.headers as Headers;
-  expect(headers.get('x-manawg-member-id')).toBeNull();
-  expect(headers.get('x-manawg-member-token')).toBeNull();
-  expect(headers.get('origin')).toBe(validConfig.origin);
-  expect(headers.get('cookie')).toBeNull();
-});
-
 it('url-encodes the WG code and path segments', async () => {
   const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ ok: true }));
   const client = createManaWgClient({ ...validConfig, wgCode: 'WG 1/2' }, fetchMock);
@@ -105,20 +87,6 @@ it('url-encodes the WG code and path segments', async () => {
 
   expect(fetchMock.mock.calls[0]?.[0]).toBe(
     'https://example.test/api/wg/WG%201%2F2/chores/chore%2F1/complete',
-  );
-});
-
-it('serializes query parameters and drops empty ones', async () => {
-  const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ events: [] }));
-  const client = createManaWgClient(validConfig, fetchMock);
-
-  await client.call({
-    path: ['events'],
-    query: { from: '2026-09-01', to: undefined, limit: 25, empty: '' },
-  });
-
-  expect(fetchMock.mock.calls[0]?.[0]).toBe(
-    'https://example.test/api/wg/WG123/events?from=2026-09-01&limit=25',
   );
 });
 
@@ -158,46 +126,6 @@ it('rejects redirects before member headers can reach another origin', async () 
 
   expect(await errorCode(client.call({ path: ['dashboard'] }))).toBe('upstream_network_error');
   expect(targetHeaders).toBeUndefined();
-});
-
-it('sends POST JSON with an idempotency key', async () => {
-  const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ item: { id: '1' } }));
-  const client = createManaWgClient(validConfig, fetchMock);
-
-  await client.call({
-    path: ['shopping'],
-    method: 'POST',
-    body: { name: 'Milch', quantity: '2' },
-  });
-
-  const options = fetchMock.mock.calls[0]?.[1];
-  if (!options) {
-    throw new Error('Expected a fetch call');
-  }
-  const headers = options.headers as Headers;
-  expect(options.method).toBe('POST');
-  expect(options.body).toBe(JSON.stringify({ name: 'Milch', quantity: '2' }));
-  expect(headers.get('content-type')).toBe('application/json');
-  expect(headers.get('idempotency-key')).toMatch(UUID_PATTERN);
-});
-
-it('sends DELETE bodies so routes can read optional payloads', async () => {
-  const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ deleted: 1 }));
-  const client = createManaWgClient(validConfig, fetchMock);
-
-  await client.call({ path: ['shopping'], method: 'DELETE' });
-
-  expect(fetchMock.mock.calls[0]?.[1]?.method).toBe('DELETE');
-  expect(fetchMock.mock.calls[0]?.[1]?.body).toBe('{}');
-});
-
-it('never attaches an idempotency key to GET requests', async () => {
-  const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ items: [] }));
-  const client = createManaWgClient(validConfig, fetchMock);
-
-  await client.call({ path: ['shopping'] });
-
-  expect((fetchMock.mock.calls[0]?.[1]?.headers as Headers).get('idempotency-key')).toBeNull();
 });
 
 it.each([502, 503, 504])(
@@ -396,73 +324,6 @@ it('does not loop beyond one retry when the app keeps rejecting the session', as
   expect(await errorCode(client.call({ path: ['shopping'] }))).toBe('auth_required');
   expect(fetchMock).toHaveBeenCalledTimes(2);
   expect(auth.invalidate).toHaveBeenCalledTimes(1);
-});
-
-it('keeps identity errors like member_id_invalid on a single request', async () => {
-  const auth = fakeAuth();
-  const fetchMock = vi
-    .fn<typeof fetch>()
-    .mockResolvedValue(jsonResponse({ error: 'bad', code: 'member_id_invalid' }, 401));
-  const client = createManaWgClient(validConfig, fetchMock, auth);
-
-  expect(await errorCode(client.call({ path: ['shopping'] }))).toBe('member_id_invalid');
-  expect(fetchMock).toHaveBeenCalledTimes(1);
-  expect(auth.invalidate).not.toHaveBeenCalled();
-});
-
-it('builds requests for every registered write method', async () => {
-  const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ ok: true }));
-  const client = createManaWgClient(validConfig, fetchMock);
-
-  const requests: WgRequest[] = [
-    { path: ['shopping'] },
-    { path: ['shopping', '1'], method: 'PATCH', body: { bought: true } },
-    { path: ['shopping', '1'], method: 'DELETE' },
-    { path: ['expenses'], method: 'POST', body: { amountCents: 100 } },
-  ];
-  for (const request of requests) {
-    await client.call(request);
-  }
-
-  expect(fetchMock.mock.calls.map((call) => call[1]?.method)).toEqual([
-    'GET',
-    'PATCH',
-    'DELETE',
-    'POST',
-  ]);
-});
-
-it('addresses account routes without the WG code', async () => {
-  const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ wgs: [] }));
-  const client = createManaWgClient(validConfig, fetchMock);
-
-  await expect(client.call({ path: ['mine'], scope: 'account' })).resolves.toEqual({ wgs: [] });
-
-  expect(fetchMock).toHaveBeenCalledTimes(1);
-  expect(fetchMock.mock.calls[0]?.[0]).toBe('https://example.test/api/wg/mine');
-});
-
-it('addresses the bare account collection when the path is empty', async () => {
-  const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ wg: {} }));
-  const client = createManaWgClient(validConfig, fetchMock);
-
-  await client.call({ path: [], scope: 'account', method: 'POST', body: { name: 'WG' } });
-
-  expect(fetchMock.mock.calls[0]?.[0]).toBe('https://example.test/api/wg');
-});
-
-it('forwards per-request headers', async () => {
-  const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ ok: true }));
-  const client = createManaWgClient(validConfig, fetchMock);
-
-  await client.call({
-    path: ['members', 'm1', 'claim'],
-    method: 'POST',
-    headers: { 'x-test': '1' },
-  });
-
-  const headers = fetchMock.mock.calls[0]?.[1]?.headers as Headers;
-  expect(headers.get('x-test')).toBe('1');
 });
 
 it('returns a CSV body as text instead of dropping it', async () => {

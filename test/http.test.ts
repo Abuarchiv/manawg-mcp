@@ -128,18 +128,6 @@ it('answers unknown paths with 404 and never leaks configuration', async () => {
   await expect(response.json()).resolves.toEqual({ error: 'not_found' });
 });
 
-it('reports the mcp endpoint in the health payload', async () => {
-  const running = await startHttp();
-
-  const payload = (await (await fetch(`${originOf(running)}/health`)).json()) as {
-    mcpPath: string;
-    version: string;
-  };
-
-  expect(payload.mcpPath).toBe('/mcp');
-  expect(payload.version).toMatch(/^\d+\.\d+\.\d+/);
-});
-
 it('reports /ready as 200 before and 503 while draining', async () => {
   const running = await startHttp({ drainMs: 500 });
 
