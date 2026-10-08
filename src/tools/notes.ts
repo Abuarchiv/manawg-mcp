@@ -12,7 +12,7 @@ export const noteTools = [
     name: 'notes_list',
     title: 'Pinnwand lesen',
     description:
-      'Ankündigungen mit reactionCounts, myReactions, takers, comments (max 300, pinned zuerst). status open|resolved, kind info|question|problem|request|decision.',
+      'Ankündigungen mit reactionCounts, myReactions, takers, comments (pinned zuerst). status open|resolved, kind info|question|problem|request|decision.',
     method: 'GET',
     input: z.strictObject({}),
     path: () => ['announcements'],
@@ -21,7 +21,7 @@ export const noteTools = [
     name: 'note_comments',
     title: 'Kommentare einer Ankündigung lesen',
     description:
-      'Alle Kommentare einer Ankündigung (max 300) in chronologischer Reihenfolge mit authorName, authorColor und createdAt. 404 announcement_not_found bei unbekannter id.',
+      'Alle Kommentare einer Ankündigung (max 500) in chronologischer Reihenfolge mit authorName, authorColor und createdAt. 404 announcement_not_found bei unbekannter id.',
     method: 'GET',
     input: z.strictObject({ id: uuid }),
     path: (input) => ['announcements', input.id, 'comments'],
@@ -30,7 +30,7 @@ export const noteTools = [
     name: 'note_create',
     title: 'Ankündigung verfassen',
     description:
-      'content 1..2000, kind default info. Antwort enthält warning falls die Push-Benachrichtigung nicht bestätigt werden konnte.',
+      'content 1..2000, kind default info. imageUrl muss eine von der App ausgestellte Upload-URL sein (sonst image_invalid; gelöschte Uploads image_removed). Antwort enthält warning falls die Push-Benachrichtigung nicht bestätigt werden konnte.',
     method: 'POST',
     input: z.strictObject({
       content,
@@ -44,7 +44,7 @@ export const noteTools = [
     name: 'note_update',
     title: 'Ankündigung ändern',
     description:
-      'status open|resolved, pinned oder kind nur durch Autor oder Admin; status auch durch Mitglieder mit eigener take-Reaktion (sonst status_change_not_allowed).',
+      'pinned oder kind nur durch Autor oder Admin (not_owner). status open|resolved nur durch den Autor oder Mitglieder mit eigener take-Reaktion — auch ein Admin ohne take bekommt status_change_not_allowed.',
     method: 'PATCH',
     input: z.strictObject({
       id: uuid,
@@ -71,7 +71,7 @@ export const noteTools = [
     name: 'note_comment',
     title: 'Kommentar schreiben',
     description:
-      'Kommentar zu einer Ankündigung, content 1..600. Gibt authorName und warning zurück.',
+      'Kommentar zu einer Ankündigung, content 1..600. Antwort: comment (inkl. authorName, authorColor) und warning.',
     method: 'POST',
     input: z.strictObject({ id: uuid, content: commentContent }),
     path: (input) => ['announcements', input.id, 'comments'],

@@ -2,6 +2,47 @@
 
 ## 0.2.0 (unreleased)
 
+### Fixed (contract audit against the app routes)
+
+- `wg_create` called `/api/wg/wg`; it now posts to `/api/wg`, and `creatorName` is limited to 80.
+- Removed the `search` tool: the app has no search route, every call was a 404.
+- `settlement_commit` sent the raw preview as `expected`; the app rejects unknown keys, so it is now
+  reduced to `currency`, `netCents`, `settleableCents` and `splits[id, amountCents]`.
+- `recurring_advance` takes only `id` + `expectedNextDueAt` (any override silently switched the app
+  to a template edit); `expense_create` gained `recurringExpenseId` / `expectedRecurringNextDueAt`
+  for booking a due charge; `recurring_update` accepts `expectedNextDueAt`.
+- `chore_create` no longer drops `intervalMonths` (monthly cadence is `recurrenceType: months`);
+  `recurrenceType` is `days|months`. `inventory_consume` rejects `delta: 0`, `chat_send` allows 20
+  mentions, `event_update` can clear `description`/`location`/`recurrence`/`endsAt` with `null`.
+- `export_get` returned `{}` for `format: csv`; non-JSON responses now come back as
+  `{ contentType, content }`, `sections` is sent for JSON, and oversized strings are capped.
+- `member_claim` sends the legacy proof headers (`legacyMemberToken` input) the app requires.
+- The error allowlist grew from 130 to 239 codes, so conflicts such as `chore_changed`,
+  `expense_conflict`, `not_admin`, `message_deleted` or `payload_changed` reach the model instead of
+  `upstream_http_409`.
+- Tool descriptions corrected where they promised behaviour the app does not have (permissions,
+  response fields, limits, error codes).
+
+### Added
+
+- `chat_unreact` (DELETE of an own reaction) — the only way to undo `chat_react`.
+- Regression flows (`test/flows.test.ts`) running the real session controller, client and MCP server
+  against a stateful stub app (`test/helpers/app.ts`) that enforces Origin, the Supabase cookie,
+  idempotency keys, optimistic locking and strict bodies: session lifecycle, shopping, chores,
+  expense → settlement, chat reactions, retries, rate limits, payload bounds, CSV export.
+- API surface check (`test/api-surface.test.ts`): every tool and resource must map to a route in
+  `test/fixtures/app-routes.json`, a snapshot of the app's `/api/wg` routes.
+- Trimmed the unit tests that only restated single paths, defaults or schema limits.
+
+### Changed
+
+- The member identity bootstrap, `identity.json` and `MANAWG_MEMBER_ID` / `MANAWG_MEMBER_TOKEN` /
+  `MANAWG_IDENTITY_CACHE` are gone: the app resolves the member from the session cookie and never
+  returned a member token. The variables are ignored if still set.
+- Internals split into focused modules: `errors.ts` (allowlist, `ManaWgError`, `describeError`),
+  `register.ts` (resources, prompts, tools), `version.ts`, `ids.ts`; `auth.ts` Set-Cookie handling is
+  pure functions; the build uses `tsconfig.build.json` instead of a long command line.
+
 ### Added
 
 - Supabase session auth: password/refresh-token sign-in, `sb-*-auth-token` cookie serialization

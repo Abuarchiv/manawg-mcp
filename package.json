@@ -16,7 +16,7 @@
     "live-check": "node scripts/live-check.mjs",
     "smoke": "node scripts/smoke-stdio.mjs",
     "inspector": "npx -y @modelcontextprotocol/inspector node dist/index.js",
-    "build": "tsc --outDir dist --rootDir src --noEmit false --target ES2022 --module NodeNext --moduleResolution NodeNext --strict --verbatimModuleSyntax --skipLibCheck --types node src/*.ts"
+    "build": "rm -rf dist && tsc -p tsconfig.build.json"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.0",

@@ -43,7 +43,7 @@ export const memberTools = [
     name: 'member_update',
     title: 'Mitglied ändern (Admin/sensibel)',
     description:
-      'Setzt active false für einen reversiblen Auszug oder active true zur Reaktivierung. Nur verifizierte Owner oder Admins (sonst not_owner); Admin-Mitglieder können nicht deaktiviert werden (admin_required). active ist erforderlich. PayPal verbindest du über die WG-Einstellungen im Browser; manuelle Kennungen lassen sich hier weder setzen noch löschen.',
+      'Setzt active false für einen reversiblen Auszug oder active true zur Reaktivierung. Erlaubt für das Mitglied selbst oder einen Admin (sonst not_owner); Admin-Mitglieder können nicht deaktiviert werden (admin_required). active ist erforderlich. PayPal verbindest du über die WG-Einstellungen im Browser; manuelle Kennungen lassen sich hier weder setzen noch löschen.',
     method: 'PATCH',
     gate: 'destructive',
     input: z.strictObject({
@@ -79,7 +79,7 @@ export const memberTools = [
     name: 'wg_update',
     title: 'WG-Einstellungen ändern (Admin)',
     description:
-      'name 1..100, joiningEnabled schaltet den Beitritt um, rotateShareCode true erzeugt einen NEUEN 8-stelligen Beitrittscode und aktiviert joining — der alte Code funktioniert danach nicht mehr. Nur Admin (not_verified/not_admin), mindestens ein Feld.',
+      'name 1..100, joiningEnabled schaltet den Beitritt um, rotateShareCode true erzeugt einen NEUEN 8-stelligen Beitrittscode und aktiviert joining — der alte Code funktioniert danach nicht mehr — und MANAWG_WG_CODE dieses Servers muss dann auf den neuen Code umgestellt werden, sonst antworten alle weiteren Aufrufe mit wg_not_found. Nur Admin (not_admin), mindestens ein Feld.',
     method: 'PATCH',
     gate: 'destructive',
     input: z.strictObject({

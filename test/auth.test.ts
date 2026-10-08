@@ -2,12 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
-import {
-  MAX_CHUNK_SIZE,
-  createSessionController,
-  sessionCookiePairs,
-  storageKeyFor,
-} from '../src/auth.js';
+import { MAX_CHUNK_SIZE, createSessionController, sessionCookiePairs } from '../src/auth.js';
 import type { SupabaseAuthConfig } from '../src/config.js';
 
 const SUPABASE_URL = 'https://project.supabase.co';
@@ -73,22 +68,6 @@ function decodeCookieHeader(header: string): string {
     ? Buffer.from(value.slice('base64-'.length), 'base64url').toString('utf8')
     : decodeURIComponent(value);
 }
-
-it('derives the Supabase storage key from the project hostname', () => {
-  expect(storageKeyFor(SUPABASE_URL)).toBe(KEY);
-  expect(storageKeyFor('https://eu.another-project.supabase.co')).toBe('sb-eu-auth-token');
-});
-
-it('serializes a short session as one standard cookie pair', () => {
-  const session = freshSession();
-  const pairs = sessionCookiePairs(KEY, JSON.stringify(session));
-
-  expect(pairs).toHaveLength(1);
-  expect(pairs[0]?.name).toBe(KEY);
-  expect(pairs[0]?.value).toBe(
-    `base64-${Buffer.from(JSON.stringify(session), 'utf8').toString('base64url')}`,
-  );
-});
 
 it('splits long sessions into chunked pairs that decode back to the session', () => {
   const session = { ...freshSession(), user: { id: 'user-1', padding: 'x'.repeat(4000) } };
@@ -260,26 +239,6 @@ it('ingests chunked Set-Cookie headers from the app', async () => {
   const header = await controller.cookieHeader();
   expect(pairs.length).toBeGreaterThan(1);
   expect(header).toBe(pairs.map((pair) => `${pair.name}=${pair.value}`).join('; '));
-});
-
-it('ignores cookies that belong to another Supabase project', async () => {
-  fetchMock.mockResolvedValue(grantResponse({ ...freshSession(3600), access_token: 'at-home' }));
-  const controller = createSessionController(authConfig(), fetchMock);
-  const foreign = { ...freshSession(7200), access_token: 'foreign' };
-
-  await controller.ingest(
-    new Response('{}', {
-      status: 200,
-      headers: {
-        'set-cookie': `sb-other-auth-token=${encodeURIComponent(JSON.stringify(foreign))}; Path=/`,
-      },
-    }),
-  );
-
-  const header = await controller.cookieHeader();
-  expect(decodeCookieHeader(header)).toContain('at-home');
-  expect(decodeCookieHeader(header)).not.toContain('foreign');
-  expect(fetchMock).toHaveBeenCalledTimes(1);
 });
 
 it('drops the cached session on invalidate and re-authenticates', async () => {

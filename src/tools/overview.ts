@@ -1,6 +1,21 @@
 import { z } from 'zod';
 import { defineTool } from './types.js';
 
+const exportSection = z.enum([
+  'members',
+  'expenses',
+  'expensePayments',
+  'recurringExpenses',
+  'shoppingItems',
+  'chores',
+  'absences',
+  'announcements',
+  'announcementComments',
+  'events',
+  'chatMessages',
+  'auditEvents',
+]);
+
 export const overviewTools = [
   defineTool({
     name: 'wg_list',
@@ -25,7 +40,7 @@ export const overviewTools = [
     name: 'dashboard_get',
     title: 'Dashboard lesen',
     description:
-      'Kompaktes Gesamtbild: balances, spendByDay, total/week/month spend (zent), openShoppingCount, dueChores, activity, latestAnnouncement, dueRecurringExpenses, absentMembers, wgHealth, setup.',
+      'Kompaktes Gesamtbild: balances, spendByDay, Ausgabensummen (zent), openShoppingCount, openShoppingTop, dueChores, activity, latestAnnouncement, myOpenAnnouncements, dueRecurringExpenses, absentMembers, wgHealth, setup. totalSpendCents/weekSpendCents/monthSpendCents sind null, sobald mehrere Währungen vorkommen — dann die *SpendByCurrency-Felder nutzen.',
     method: 'GET',
     input: z.strictObject({}),
     path: () => ['dashboard'],
@@ -34,48 +49,34 @@ export const overviewTools = [
     name: 'activity_get',
     title: 'Aktivitätsverlauf lesen',
     description:
-      'Chronologische Timeline (expenses, shopping, announcements, chores, recurring, absences, audit) plus aktiv Reminder (kind, title, detail, href; top 6). Kein Rate-Limit.',
+      'Chronologische Timeline (expenses, shopping, announcements, chores, recurring, absences, audit) plus aktiv Reminder (kind, title, detail, href; top 6). Lesezugriffe sind pro IP auf 120 Anfragen/Minute begrenzt.',
     method: 'GET',
     input: z.strictObject({}),
     path: () => ['activity'],
   }),
   defineTool({
-    name: 'search',
-    title: 'WG-weit suchen',
-    description:
-      'Volltextsuche über pinnwand, putzen, ausgaben, fixkosten, einkauf, abwesenheiten. Liefert groups [{module, count, results[{id, module, title, meta, href, tags}]}] und suggestions.',
-    method: 'GET',
-    input: z.strictObject({ q: z.string().trim().min(1).max(200) }),
-    path: () => ['search'],
-    query: (input) => ({ q: input.q }),
-  }),
-  defineTool({
     name: 'export_get',
     title: 'WG-Daten exportieren',
     description:
-      'Export aller WG-Daten. format: json (sections members, expenses, recurringExpenses, shoppingItems, chores, absences, announcements, auditEvents) oder csv (pro section eine CSV). limit bis 100000, offset für Blättern.',
+      'Export der WG-Daten. format json liefert alle Abschnitte oder nur die in sections genannten; format csv liefert genau EINEN Abschnitt (section, ohne Angabe expenses) als { contentType, content }. Abschnitte: members, expenses, expensePayments, recurringExpenses, shoppingItems, chores, absences, announcements, announcementComments, events, chatMessages, auditEvents. limit bis 100000 und offset zum Blättern (members werden nie gepaged).',
     method: 'GET',
     input: z.strictObject({
       format: z.enum(['json', 'csv']).default('json'),
-      section: z
-        .enum([
-          'members',
-          'expenses',
-          'recurringExpenses',
-          'shoppingItems',
-          'chores',
-          'absences',
-          'announcements',
-          'auditEvents',
-        ])
-        .optional(),
+      section: exportSection.optional().describe('Nur für format csv: der eine Abschnitt.'),
+      sections: z
+        .array(exportSection)
+        .min(1)
+        .optional()
+        .describe('Nur für format json: auf diese Abschnitte beschränken.'),
       limit: z.number().int().min(1).max(100_000).optional(),
       offset: z.number().int().min(0).optional(),
     }),
     path: () => ['export'],
     query: (input) => ({
       format: input.format,
-      section: input.section,
+      ...(input.format === 'csv'
+        ? { section: input.section }
+        : { sections: input.sections?.join(',') }),
       limit: input.limit,
       offset: input.offset,
     }),

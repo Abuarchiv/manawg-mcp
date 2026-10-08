@@ -5,7 +5,7 @@ WORKDIR /app
 RUN npm install -g corepack@latest --no-audit --no-fund && corepack enable
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
-COPY tsconfig.json ./
+COPY tsconfig.json tsconfig.build.json ./
 COPY src ./src
 RUN pnpm build && pnpm prune --prod
 
@@ -15,8 +15,7 @@ ENV NODE_ENV=production \
     MANAWG_TRANSPORT=http \
     MANAWG_HTTP_HOST=0.0.0.0 \
     MANAWG_HTTP_PORT=8080 \
-    MANAWG_SESSION_CACHE=/data/session.json \
-    MANAWG_IDENTITY_CACHE=/data/identity.json
+    MANAWG_SESSION_CACHE=/data/session.json
 
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/dist ./dist

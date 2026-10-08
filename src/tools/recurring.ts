@@ -43,7 +43,7 @@ export const recurringTools = [
     name: 'recurring_update',
     title: 'Fixkosten bearbeiten oder pausieren',
     description:
-      'Nur Ersteller oder Admin (not_owner). paused pausiert/aktiviert; alle anderen Felder ändern das Template. 409 recurring_expense_already_advanced wenn bereits manuell fortgeschrieben.',
+      'Nur Ersteller oder Admin (not_owner). paused pausiert/aktiviert; alle anderen Felder ändern das Template. expectedNextDueAt (nextDueAt aus recurring_get) schützt vor Doppeländerungen: 409 recurring_expense_changed bedeutet erneut lesen und entscheiden.',
     method: 'PATCH',
     input: z.strictObject({
       id: uuid,
@@ -55,6 +55,7 @@ export const recurringTools = [
       nextDueAt: isoDateTime.optional(),
       splits: z.array(splitSchema).min(1).max(50).optional(),
       paused: z.boolean().optional(),
+      expectedNextDueAt: isoDateTime.optional(),
     }),
     path: (input) => ['recurring-expenses', input.id],
     body: (input) => {
@@ -66,19 +67,9 @@ export const recurringTools = [
     name: 'recurring_advance',
     title: 'Fixkosten jetzt fortschreiben',
     description:
-      'Erzeugt sofort eine Ausgabe aus dem Template und rückt nextDueAt um intervalMonths weiter; alle Felder sind optionale Überschreibungen. Nur Ersteller oder Admin (not_owner). expectedNextDueAt dient als Optimistic-Lock: 409 recurring_expense_already_advanced, wenn dieser Zyklus bereits fortgeschrieben wurde.',
+      'Rückt NUR nextDueAt um intervalMonths weiter, ohne eine Ausgabe anzulegen (jedes Mitglied darf das). expectedNextDueAt (nextDueAt aus recurring_get) ist Pflicht und schützt vor Doppelbuchung: 409 recurring_expense_already_advanced, wenn der Zyklus schon fortgeschrieben wurde; pausierte Templates liefern abo_paused. Um die fällige Zahlung zu buchen, stattdessen expense_create mit recurringExpenseId + expectedRecurringNextDueAt nutzen — das legt die Ausgabe an und rückt das Template atomar weiter.',
     method: 'PATCH',
-    input: z.strictObject({
-      id: uuid,
-      expectedNextDueAt: isoDateTime.optional(),
-      description: description.optional(),
-      amountCents: amountCents.optional(),
-      currency: z.enum(['EUR', 'CHF', 'USD', 'GBP']).optional(),
-      paidByMemberId: uuid.optional(),
-      intervalMonths: z.number().int().min(1).max(24).optional(),
-      nextDueAt: isoDateTime.optional(),
-      splits: z.array(splitSchema).min(1).max(50).optional(),
-    }),
+    input: z.strictObject({ id: uuid, expectedNextDueAt: isoDateTime }),
     path: () => ['recurring-expenses'],
     body: (input) => input,
   }),

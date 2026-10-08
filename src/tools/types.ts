@@ -1,24 +1,7 @@
 import type { z } from 'zod';
-import type { HttpMethod } from '../manawg-client.js';
-
-type QueryParams = Record<string, string | number | boolean | undefined>;
+import type { HttpMethod, QueryParams, RequestScope } from '../manawg-client.js';
 
 type ToolGate = 'destructive';
-
-export type ToolDef = {
-  name: string;
-  title: string;
-  description: string;
-  method: HttpMethod;
-  input: z.ZodType;
-  path: (input: unknown) => string[];
-  query?: (input: unknown) => QueryParams;
-  body?: (input: unknown) => unknown;
-  gate?: ToolGate;
-  scope?: 'wg' | 'account';
-  readOnly?: boolean;
-  transform?: (input: unknown, payload: unknown) => unknown;
-};
 
 type ToolSpec<TInput extends z.ZodType> = {
   name: string;
@@ -29,14 +12,21 @@ type ToolSpec<TInput extends z.ZodType> = {
   path: (input: z.output<TInput>) => string[];
   query?: (input: z.output<TInput>) => QueryParams;
   body?: (input: z.output<TInput>) => unknown;
+  headers?: (input: z.output<TInput>) => Record<string, string>;
+  /** `destructive` tools are only registered when `MANAWG_ALLOW_DESTRUCTIVE` is set. */
   gate?: ToolGate;
-  scope?: 'wg' | 'account';
+  scope?: RequestScope;
+  /** Overrides the `readOnlyHint` derived from the method (e.g. a side-effect-free POST). */
   readOnly?: boolean;
+  /** Reshapes the route payload before it is returned to the model. */
   transform?: (input: z.output<TInput>, payload: unknown) => unknown;
 };
 
+/** A tool as the registry sees it: handlers take the already-validated input. */
+export type ToolDef = ToolSpec<z.ZodType>;
+
 export function defineTool<TInput extends z.ZodType>(spec: ToolSpec<TInput>): ToolDef {
-  // Handlers are typed against the parsed input here; the registry validates before calling them.
+  // Handlers are typed against the parsed input here; the SDK validates before calling them.
   return spec as unknown as ToolDef;
 }
 
