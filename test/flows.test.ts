@@ -145,7 +145,7 @@ it('keeps destructive tools out of the default surface and offers them on reques
     'chat_unreact',
   ]);
   expect(exposed.map((tool) => tool.name)).not.toContain('reminder_send');
-  expect(exposed.map((tool) => tool.name)).not.toContain('paypal_capture');
+  expect(exposed.map((tool) => tool.name)).not.toContain('cash_payment_void');
 });
 
 it('retries transient failures, reusing the idempotency key on writes', async () => {

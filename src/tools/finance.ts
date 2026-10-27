@@ -113,7 +113,7 @@ export const financeTools = [
     name: 'expense_split_settle',
     title: 'Schuldsplit als beglichen markieren',
     description:
-      'Setzt settled (default true) auf einem einzelnen split: person bezahlt bar zurück, ohne dass sich die Ausgabe ändert. Nur debtor oder payer (not_split_party); 409 paypal_payment_pending wenn eine PayPal-Zahlung läuft.',
+      'Setzt settled (default true) auf einem einzelnen split: person bezahlt bar zurück, ohne dass sich die Ausgabe ändert. Nur debtor oder payer (not_split_party).',
     method: 'POST',
     input: z.strictObject({
       id: uuid,
@@ -160,6 +160,31 @@ export const financeTools = [
         splits: expected.splits.map(({ id, amountCents }) => ({ id, amountCents })),
       },
     }),
+  }),
+  defineTool({
+    name: 'cash_payment_record',
+    title: 'Barzahlung eintragen',
+    description:
+      'Trägt eine bereits erfolgte Barzahlung über die ganze aktuelle Netto-Schuld fromMemberId → toMemberId ein; ManaWG überweist nichts. Der Aufrufende muss eine der beiden Parteien sein (not_party_to_debt). expectedNetCents ist netCents aus settlement_preview; hat sich die Schuld seitdem geändert, kommt 409 settlement_changed — dann neu previewen. Beide müssen noch aktiv in der WG sein (member_not_in_wg). Benachrichtigt die andere Partei.',
+    method: 'POST',
+    input: z.strictObject({
+      fromMemberId: uuid,
+      toMemberId: uuid,
+      currency: z.enum(['EUR', 'CHF', 'USD', 'GBP']).default('EUR'),
+      expectedNetCents: z.number().int().min(1).max(2_147_483_647),
+    }),
+    path: () => ['payments', 'manual'],
+    body: (input) => input,
+  }),
+  defineTool({
+    name: 'cash_payment_void',
+    title: 'Barzahlung stornieren',
+    description:
+      'Storniert eine eingetragene Barzahlung (id aus expenses_list payments); die Schuld ist danach wieder offen. Nur eine der beiden Parteien (not_party_to_debt); payment_not_found oder 409 payment_voided, wenn es sie nicht (mehr) gibt. Korrigieren heißt stornieren und neu eintragen. Benachrichtigt die andere Partei.',
+    method: 'DELETE',
+    gate: 'destructive',
+    input: z.strictObject({ id: uuid }),
+    path: (input) => ['payments', 'manual', input.id],
   }),
   defineTool({
     name: 'balances_get',
