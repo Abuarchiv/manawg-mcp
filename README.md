@@ -210,9 +210,8 @@ Tool and resource failures never carry upstream messages, URLs or credentials:
 
 ## Not exposed on purpose
 
-The calendar feed URL (contains a
-feed secret), push subscription endpoints, `test_notification` and WG deletion. Set
-`MANAWG_ALLOW_DESTRUCTIVE=1` to enable the destructive tools listed above.
+The calendar feed URL (contains a feed secret), push subscription endpoints, `test_notification`
+and WG deletion. Set `MANAWG_ALLOW_DESTRUCTIVE=1` to enable the destructive tools listed above.
 
 ## Development
 
