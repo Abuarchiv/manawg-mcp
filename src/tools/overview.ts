@@ -40,7 +40,7 @@ export const overviewTools = [
     name: 'dashboard_get',
     title: 'Dashboard lesen',
     description:
-      'Kompaktes Gesamtbild: balances, spendByDay, Ausgabensummen (zent), openShoppingCount, openShoppingTop, dueChores, activity, latestAnnouncement, myOpenAnnouncements, dueRecurringExpenses, absentMembers, wgHealth, setup. totalSpendCents/weekSpendCents/monthSpendCents sind null, sobald mehrere Währungen vorkommen — dann die *SpendByCurrency-Felder nutzen.',
+      'Kompaktes Gesamtbild: balances, spendByDay, Ausgabensummen (zent), openShoppingCount, openShoppingTop, dueChores, activity, latestAnnouncement, myOpenAnnouncements, dueRecurringExpenses, absentMembers, wgHealth, setup. Summen je Währung in totalSpendByCurrency/weekSpendByCurrency/monthSpendByCurrency.',
     method: 'GET',
     input: z.strictObject({}),
     path: () => ['dashboard'],

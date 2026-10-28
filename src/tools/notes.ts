@@ -99,14 +99,14 @@ export const noteTools = [
     name: 'note_react',
     title: 'Reaktion setzen',
     description:
-      'Reaktion seen|take|ok auf eine Ankündigung. active true/false setzt explizit, ohne active wird umgeschaltet (toggle). take auf resolved ist nicht erlaubt (reaction_invalid).',
+      'Reaktion seen|take|ok auf eine Ankündigung. active true setzt, false entfernt; eine Wiederholung ändert nichts. take auf resolved ist nicht erlaubt (reaction_invalid).',
     method: 'POST',
     input: z.strictObject({
       id: uuid,
       reaction,
-      active: z.boolean().optional(),
+      active: z.boolean(),
     }),
     path: (input) => ['announcements', input.id, 'reactions'],
-    body: (input) => (input.active === undefined ? { reaction: input.reaction } : input),
+    body: (input) => ({ reaction: input.reaction, active: input.active }),
   }),
 ];
