@@ -158,7 +158,7 @@ confirmation.
 | Domain | Tools |
 | --- | --- |
 | Overview | `wg_list`, `wg_overview`, `dashboard_get`, `activity_get`, `export_get` |
-| Finance | `expenses_list`, `expense_create`, `expense_update`, `expense_delete`†, `expense_split_settle`, `settlement_preview`, `settlement_commit`, `balances_get`, `reminders_list`, `reminder_send`† |
+| Finance | `expenses_list`, `expense_create`, `expense_update`, `expense_delete`†, `expense_split_settle`, `settlement_preview`, `settlement_commit`, `cash_payment_record`, `cash_payment_void`†, `balances_get`, `reminders_list`, `reminder_send`† |
 | Recurring | `recurring_list`, `recurring_get`, `recurring_advance`, `recurring_create`, `recurring_update`, `recurring_delete`† |
 | Shopping | `shopping_list`, `shopping_add`, `shopping_set_bought`, `shopping_remove`†, `shopping_clear_bought`† |
 | Inventory | `inventory_list`, `inventory_add`, `inventory_update`, `inventory_consume`, `inventory_remove`† |
@@ -168,10 +168,9 @@ confirmation.
 | Calendar | `events_list`, `event_get`, `event_create`, `event_update`, `event_delete`†, `absences_list`, `absence_create`, `absence_delete`† |
 | Members | `members_list`, `member_get`, `member_update`†, `notifications_get`, `notifications_update`, `wg_update`† |
 | Imports | `import_preview`, `import_commit`† |
-| PayPal | `paypal_order_create`†, `paypal_capture`† |
 | Account | `calendar_subscription_get`, `member_claim`†, `wg_create`† |
 
-† destructive: only registered when `MANAWG_ALLOW_DESTRUCTIVE=1` (19 tools), and annotated with
+† destructive: only registered when `MANAWG_ALLOW_DESTRUCTIVE=1` (18 tools), and annotated with
 `destructiveHint`. GET tools and the side-effect-free `import_preview` POST are annotated
 `readOnlyHint`.
 
@@ -189,11 +188,10 @@ For `chore_complete`, read `chores_list` first and pass `nextDueAt` as `expected
 `expectedBoughtAt`. On
 `chore_occurrence_changed` or `shopping_item_changed`, read again and decide before retrying.
 
-PayPal orders and captures require destructive mode. The recipient connects PayPal in the browser
-under WG settings; the MCP does not perform OAuth or launch checkout. The payer must approve the
-order in the ManaWG browser checkout before `paypal_capture`. Captures may return `PENDING` while
-PayPal reconciles; retry with the same `orderId`. Terminal results may be `FAILED` or `CANCELLED`;
-`COMPLETED` records the payment in open-balance calculations without changing expense splits.
+Debts are settled by hand: `settlement_commit` marks the previewed shares as paid, and
+`cash_payment_record` enters a cash payment over the whole net debt of a pair (pass `netCents` from
+`settlement_preview` as `expectedNetCents`). A wrong cash payment is taken back with
+`cash_payment_void` and entered again. ManaWG never moves money.
 
 ## Error contract
 
@@ -212,9 +210,8 @@ Tool and resource failures never carry upstream messages, URLs or credentials:
 
 ## Not exposed on purpose
 
-PayPal OAuth linking (browser-only), manual merchant-ID editing, the calendar feed URL (contains a
-feed secret), push subscription endpoints, `test_notification` and WG deletion. Set
-`MANAWG_ALLOW_DESTRUCTIVE=1` to enable the destructive tools listed above.
+The calendar feed URL (contains a feed secret), push subscription endpoints, `test_notification`
+and WG deletion. Set `MANAWG_ALLOW_DESTRUCTIVE=1` to enable the destructive tools listed above.
 
 ## Development
 

@@ -54,28 +54,6 @@ export const householdTools = [
     body: (input) => input,
   }),
   defineTool({
-    name: 'paypal_order_create',
-    title: 'PayPal-Zahlung anlegen',
-    description:
-      'Erstellt eine PayPal-Order für die offene Schuld fromMemberId → toMemberId und gibt orderId und amountCents zurück. Der Empfänger muss PayPal vorher in den WG-Einstellungen im Browser verbinden. Dieses Tool liefert nur die orderId und startet oder bestätigt keinen PayPal-Checkout; für normale Zahlungen den Checkout in der ManaWG-Web-App nutzen. Nur EUR; der Aufrufer muss debtor und verifiziert sein. Das Anlegen der Order bewegt noch kein Geld — erst paypal_capture versucht die Einlösung.',
-    method: 'POST',
-    gate: 'destructive',
-    input: z.strictObject({ fromMemberId: uuid, toMemberId: uuid }),
-    path: () => ['paypal', 'order'],
-    body: (input) => ({ ...input, currency: 'EUR' }),
-  }),
-  defineTool({
-    name: 'paypal_capture',
-    title: 'PayPal-Zahlung einlösen',
-    description:
-      'Löst eine zuvor im PayPal-Checkout der ManaWG-Web-App vom Zahler bestätigte Order ein (orderId); MCP startet diesen Browser-Schritt nicht. Antwortstatus ist COMPLETED nach erfasster Zahlung, PENDING (HTTP 202) solange PayPal noch abgeglichen wird oder FAILED/CANCELLED bei einem endgültigen Fehlschlag. Bei PENDING dieselbe orderId erneut senden. Abgeschlossene Zahlungen werden mit offenen Salden verrechnet, ändern aber keine Ausgabe-Splits. Nur der anlegende debtor darf einlösen; abgeschlossene Orders antworten idempotent erneut mit COMPLETED.',
-    method: 'POST',
-    gate: 'destructive',
-    input: z.strictObject({ orderId: z.string().trim().min(1).max(100) }),
-    path: () => ['paypal', 'capture'],
-    body: (input) => input,
-  }),
-  defineTool({
     name: 'member_claim',
     title: 'Mitglied mit Account verknüpfen',
     description:

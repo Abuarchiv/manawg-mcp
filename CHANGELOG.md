@@ -2,6 +2,16 @@
 
 ## 0.2.0 (unreleased)
 
+### Removed
+
+- `paypal_order_create` and `paypal_capture`: the app no longer has PayPal. Their error codes and
+  the `paypalMerchantId` mentions in the member tools are gone.
+
+### Added
+
+- `cash_payment_record` and `cash_payment_void`† for entering and taking back a cash payment over
+  the net debt of a pair (`/api/wg/<code>/payments/manual`).
+
 ### Fixed (contract audit against the app routes)
 
 - `wg_create` called `/api/wg/wg`; it now posts to `/api/wg`, and `creatorName` is limited to 80.

@@ -21,7 +21,7 @@ export const memberTools = [
     name: 'members_list',
     title: 'Mitglieder auflisten',
     description:
-      'Alle Mitglieder mit id, name, color, active, paypalMerchantId und viewerIsAdmin; pagination total/limit/offset. limit max 500 (default 100).',
+      'Alle Mitglieder mit id, name, color, active und viewerIsAdmin; pagination total/limit/offset. limit max 500 (default 100).',
     method: 'GET',
     input: z.strictObject({
       limit: z.number().int().min(1).max(500).default(100),
@@ -33,8 +33,7 @@ export const memberTools = [
   defineTool({
     name: 'member_get',
     title: 'Mitglied und offene Salden lesen',
-    description:
-      'Ein Mitglied plus openBalances (direction owes|owed). paypalMerchantId nur für das eigene Mitglied.',
+    description: 'Ein Mitglied plus openBalances (direction owes|owed).',
     method: 'GET',
     input: z.strictObject({ id: uuid }),
     path: (input) => ['members', input.id],
@@ -43,7 +42,7 @@ export const memberTools = [
     name: 'member_update',
     title: 'Mitglied ändern (Admin/sensibel)',
     description:
-      'Setzt active false für einen reversiblen Auszug oder active true zur Reaktivierung. Erlaubt für das Mitglied selbst oder einen Admin (sonst not_owner); Admin-Mitglieder können nicht deaktiviert werden (admin_required). active ist erforderlich. PayPal verbindest du über die WG-Einstellungen im Browser; manuelle Kennungen lassen sich hier weder setzen noch löschen.',
+      'Setzt active false für einen reversiblen Auszug oder active true zur Reaktivierung. Erlaubt für das Mitglied selbst oder einen Admin (sonst not_owner); Admin-Mitglieder können nicht deaktiviert werden (admin_required). active ist erforderlich.',
     method: 'PATCH',
     gate: 'destructive',
     input: z.strictObject({
