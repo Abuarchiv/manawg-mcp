@@ -2,6 +2,13 @@
   "name": "manawg-mcp",
   "version": "0.2.0",
   "private": true,
+  "description": "MCP server for ManaWG, the free, open-source app for shared flats: expenses, cleaning rota, shopping list, calendar and chat as tools for AI assistants",
+  "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Abuarchiv/manawg-mcp.git"
+  },
+  "homepage": "https://github.com/Abuarchiv/manawg-mcp#readme",
   "type": "module",
   "engines": {
     "node": ">=22.12.0 <23",
