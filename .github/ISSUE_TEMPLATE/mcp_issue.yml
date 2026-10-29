@@ -1,0 +1,23 @@
+name: MCP server problem
+description: A tool, resource or prompt that fails, returns the wrong data or does not match the app.
+body:
+  - type: input
+    id: tool
+    attributes:
+      label: Tool, resource or prompt
+      placeholder: expense_create
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What did you call, what came back, and what did you expect? Leave out credentials and WG codes.
+    validations:
+      required: true
+  - type: input
+    id: setup
+    attributes:
+      label: Setup
+      description: Transport, MCP host and server version.
+      placeholder: stdio, Claude Desktop, 0.2.0
