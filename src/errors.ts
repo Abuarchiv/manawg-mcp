@@ -9,7 +9,7 @@ export const SAFE_ERROR_MESSAGE = 'ManaWG request failed';
 export const DETAIL_SAFE_CODE = 'validation_errors';
 
 export const SAFE_UPSTREAM_CODES = new Set([
-  'abo_paused',
+  'recurring_paused',
   'absence_not_found',
   'absence_overlaps_existing',
   'access_denied',

@@ -2,8 +2,8 @@ import { z } from 'zod';
 import { uuid } from './shared.js';
 import { defineTool } from './types.js';
 
-const units = z.enum(['Stück', 'L', 'kg', 'Rolle', 'Packung']);
-const categories = z.enum(['bad', 'kueche', 'putzmittel', 'sonstiges']);
+const units = z.enum(['piece', 'litre', 'kilogram', 'roll', 'pack']);
+const categories = z.enum(['bathroom', 'kitchen', 'cleaning', 'other']);
 const itemName = z.string().trim().min(1).max(120);
 const quantity = z.number().int().min(0).max(9999);
 const threshold = z.number().int().min(0).max(9999);
@@ -22,14 +22,14 @@ export const inventoryTools = [
     name: 'inventory_add',
     title: 'Vorratsartikel anlegen',
     description:
-      'name 1..120; quantity 0..9999 (default 0), unit Stück|L|kg|Rolle|Packung, threshold 0..9999 (default 1), category bad|kueche|putzmittel|sonstiges (default sonstiges).',
+      'name 1..120; quantity 0..9999 (default 0), unit piece|litre|kilogram|roll|pack, threshold 0..9999 (default 1), category bathroom|kitchen|cleaning|other (default other).',
     method: 'POST',
     input: z.strictObject({
       name: itemName,
       quantity: quantity.default(0),
-      unit: units.default('Stück'),
+      unit: units.default('piece'),
       threshold: threshold.default(1),
-      category: categories.default('sonstiges'),
+      category: categories.default('other'),
     }),
     path: () => ['inventory'],
     body: (input) => input,
