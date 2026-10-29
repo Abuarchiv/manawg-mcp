@@ -1,6 +1,6 @@
 # manawg-mcp
 
-MCP server for a [ManaWG](https://github.com/Abuarchiv/manawg-app) household. Node 22, stdio or
+MCP server for a [ManaWG](https://github.com/Abuarchiv/manawg) household. Node 22, stdio or
 streamable HTTP transport, 75 tools, 13 resources, 4 resource templates and 4 prompts over the
 same HTTP API the web app uses.
 
@@ -231,3 +231,15 @@ pnpm live-check  # read-only probes against the real deployment (credentials req
 - The credential file and the session cache stay mode `0600` outside the repo.
 - Never set `MEMBER_SESSION_SECRET`.
 - Error text is generated locally from an allowlist — upstream response bodies are not forwarded.
+
+Report vulnerabilities privately, see [SECURITY.md](SECURITY.md).
+
+## Contributing
+
+Issues and pull requests are welcome, see [CONTRIBUTING.md](CONTRIBUTING.md) and the
+[Code of Conduct](CODE_OF_CONDUCT.md).
+
+## License
+
+[Apache License 2.0](LICENSE), like the [ManaWG app](https://github.com/Abuarchiv/manawg). The
+licence does not grant rights to the name ManaWG or its logo.
