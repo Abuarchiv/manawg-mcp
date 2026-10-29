@@ -56,7 +56,7 @@ export const calendarTools = [
     name: 'event_update',
     title: 'Edit a calendar event',
     description:
-      'Fields as in event_create, all optional; fields not sent stay unchanged, description/location/recurrence/endsAt can be cleared with null. Only the creator or an admin (not_owner).',
+      'Fields as in event_create, all optional; fields not sent stay unchanged, description/location/recurrence/endsAt can be cleared with null. Only the creator or an admin (not_owner). expectedUpdatedAt (updatedAt from event_get) guards against concurrent edits: 409 event_changed means read again and decide.',
     method: 'PATCH',
     input: z.strictObject({
       id: uuid,
@@ -67,6 +67,7 @@ export const calendarTools = [
       allDay: z.boolean().optional(),
       location: eventLocation.nullable().optional(),
       recurrence: eventRecurrence.nullable().optional(),
+      expectedUpdatedAt: isoDateTime.optional(),
     }),
     path: (input) => ['events', input.id],
     body: (input) => {

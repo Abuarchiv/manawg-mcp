@@ -15,6 +15,8 @@
 - `category` on `expense_create`, `expense_update`, `recurring_create` and `recurring_update`
   (`groceries|household|housing|leisure|transport|other`); expenses created here no longer all land
   in `other`.
+- `content` and `expectedUpdatedAt` on `note_update`, `expectedUpdatedAt` on `event_update`, so
+  concurrent edits answer `announcement_changed` / `event_changed` instead of overwriting.
 - `cash_payment_record` and `cash_payment_void`† for entering and taking back a cash payment over
   the net debt of a pair (`/api/wg/<code>/payments/manual`).
 
@@ -32,7 +34,7 @@
   mentions, `event_update` can clear `description`/`location`/`recurrence`/`endsAt` with `null`.
 - `export_get` returned `{}` for `format: csv`; non-JSON responses now come back as
   `{ contentType, content }`, `sections` is sent for JSON, and oversized strings are capped.
-- The error allowlist grew from 130 to 239 codes, so conflicts such as `chore_changed`,
+- The error allowlist grew from 130 to 241 codes, so conflicts such as `chore_changed`,
   `expense_conflict`, `not_admin`, `message_deleted` or `payload_changed` reach the model instead of
   `upstream_http_409`.
 - Tool descriptions corrected where they promised behaviour the app does not have (permissions,

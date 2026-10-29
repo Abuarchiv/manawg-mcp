@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { imageUrl, uuid } from './shared.js';
+import { imageUrl, isoDateTime, uuid } from './shared.js';
 import { defineTool } from './types.js';
 
 const content = z.string().trim().min(1).max(2000);
@@ -44,13 +44,15 @@ export const noteTools = [
     name: 'note_update',
     title: 'Change a post',
     description:
-      'pinned or kind only by the author or an admin (not_owner). status open|resolved only by the author or members with their own take reaction; an admin without take also gets status_change_not_allowed.',
+      'content (1..2000, manual posts only, otherwise content_locked), pinned or kind only by the author or an admin (not_owner). status open|resolved only by the author or members with their own take reaction; an admin without take also gets status_change_not_allowed. expectedUpdatedAt (updatedAt from notes_list) guards against concurrent edits: 409 announcement_changed means read again and decide.',
     method: 'PATCH',
     input: z.strictObject({
       id: uuid,
       status: z.enum(['open', 'resolved']).optional(),
       pinned: z.boolean().optional(),
       kind: noteKind.optional(),
+      content: content.optional(),
+      expectedUpdatedAt: isoDateTime.optional(),
     }),
     path: (input) => ['announcements', input.id],
     body: (input) => {
