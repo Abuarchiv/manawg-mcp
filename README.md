@@ -1,7 +1,7 @@
 # manawg-mcp
 
 MCP server for a [ManaWG](https://github.com/Abuarchiv/manawg-app) household. Node 22, stdio or
-streamable HTTP transport, 75 tools, 13 resources, 4 resource templates and 4 prompts over the
+streamable HTTP transport, 74 tools, 13 resources, 4 resource templates and 4 prompts over the
 same HTTP API the web app uses.
 
 ## Setup
@@ -64,9 +64,6 @@ The web app guards every `/api/wg/[code]` route with a live Supabase session and
    expects (3180-byte chunks for long sessions),
 4. sends `Origin: <MANAWG_BASE_URL>` and, on writes, a fresh `Idempotency-Key` on every request,
 5. ingests `Set-Cookie` rotations the app returns and retries once on `401 auth_required`.
-
-The `x-manawg-member-*` headers are only sent by `member_claim`, the one legacy route that checks
-them.
 
 ## Host start
 
@@ -145,15 +142,15 @@ app has no single-entity `GET` for it.
 
 | Prompt | Arguments | Purpose |
 | --- | --- | --- |
-| `daily_brief` | `fokus` | Dashboard, activity, shopping, chores and calendar in up to 10 bullets |
+| `daily_brief` | `focus` | Dashboard, activity, shopping, chores and calendar in up to 10 bullets |
 | `shopping_run` | – | Shopping list merged with the pantry, grouped into one tour list |
-| `payment_reminder` | `ton` | Draft only: friendly reminder for open balances, never sends |
+| `payment_reminder` | `tone` | Draft only: friendly reminder for open balances, never sends |
 | `settlement_plan` | – | Minimal transfers from `balances_get` + `settlement_preview`, never commits |
 
 Prompts return instructions plus tool names; the destructive steps stay gated behind an explicit
 confirmation.
 
-## Tools (75)
+## Tools (74)
 
 | Domain | Tools |
 | --- | --- |
@@ -168,9 +165,9 @@ confirmation.
 | Calendar | `events_list`, `event_get`, `event_create`, `event_update`, `event_delete`†, `absences_list`, `absence_create`, `absence_delete`† |
 | Members | `members_list`, `member_get`, `member_update`†, `notifications_get`, `notifications_update`, `wg_update`† |
 | Imports | `import_preview`, `import_commit`† |
-| Account | `calendar_subscription_get`, `member_claim`†, `wg_create`† |
+| Account | `calendar_subscription_get`, `wg_create`† |
 
-† destructive: only registered when `MANAWG_ALLOW_DESTRUCTIVE=1` (18 tools), and annotated with
+† destructive: only registered when `MANAWG_ALLOW_DESTRUCTIVE=1` (17 tools), and annotated with
 `destructiveHint`. GET tools and the side-effect-free `import_preview` POST are annotated
 `readOnlyHint`.
 

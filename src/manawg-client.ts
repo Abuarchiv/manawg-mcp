@@ -14,8 +14,6 @@ export type WgRequest = {
   method?: HttpMethod;
   query?: QueryParams;
   body?: unknown;
-  /** Extra request headers; only the legacy member claim needs any. */
-  headers?: Record<string, string>;
   /** `account` targets the account-level routes under `/api/wg/*` that live outside a WG code. */
   scope?: RequestScope;
 };
@@ -188,9 +186,6 @@ export function createManaWgClient(
     const method = request.method ?? 'GET';
     // The app derives the acting member from the session cookie; no member headers are needed.
     const headers = new Headers({ accept: 'application/json, text/csv', origin: config.origin });
-    for (const [name, value] of Object.entries(request.headers ?? {})) {
-      headers.set(name, value);
-    }
     if (auth) {
       try {
         headers.set('cookie', await auth.cookieHeader());

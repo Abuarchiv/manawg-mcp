@@ -21,87 +21,86 @@ function resource(spec: ResourceSpec): ResourceDef {
 export const RESOURCE_DEFS: ResourceDef[] = [
   resource({
     name: 'dashboard',
-    title: 'ManaWG-Dashboard',
+    title: 'ManaWG dashboard',
     description:
-      'Aggregiertes Gesamtbild: Salden, Ausgaben je Tag, offene Einkäufe, anstehende Putzaufgaben, Ankündigungen und WG-Gesundheit.',
+      'Aggregated overall picture: balances, spending per day, open shopping, upcoming chores, posts and flat health.',
     path: ['dashboard'],
   }),
   resource({
     name: 'members',
-    title: 'Mitglieder der WG',
+    title: 'Flat members',
     description:
-      'WG-Manifest mit Name, Share-Code, allen Mitgliedern (id, name, color) und currentMember (memberId, name).',
+      'Flat manifest with name, share code, all members (id, name, color) and currentMember (memberId, name).',
     path: [],
   }),
   resource({
     name: 'expenses',
-    title: 'Ausgaben und Splits',
+    title: 'Expenses and splits',
     description:
-      'Neueste Ausgaben mit Schuldnersplits und Zahlungen; die Liste ist auf 100 Einträge begrenzt (_mcp.truncated), vollständig über expenses_list mit limit/offset.',
+      'Newest expenses with debtor splits and payments; the list is capped at 100 entries (_mcp.truncated), the full list is in expenses_list with limit/offset.',
     path: ['expenses'],
     limits: { maxItems: 100, maxBytes: 40_000 },
   }),
   resource({
     name: 'recurring',
-    title: 'Fixkosten',
-    description:
-      'Wiederkehrende Ausgaben mit Intervall, nächstem Fälligkeitstermin, Pause-Status und Splits.',
+    title: 'Fixed costs',
+    description: 'Recurring expenses with interval, next due date, pause state and splits.',
     path: ['recurring-expenses'],
   }),
   resource({
     name: 'shopping',
-    title: 'Einkaufsliste',
-    description: 'Offene und gekaufte Artikel samt Eintragenden und Kaufzeitpunkt.',
+    title: 'Shopping list',
+    description: 'Open and bought items with who added them and when they were bought.',
     path: ['shopping'],
   }),
   resource({
     name: 'inventory',
-    title: 'Vorräte',
-    description: 'Vorratsartikel mit Bestand, Schwelle, Einheit und Kategorie.',
+    title: 'Supplies',
+    description: 'Supply items with stock, threshold, unit and category.',
     path: ['inventory'],
   }),
   resource({
     name: 'chores',
-    title: 'Putzplan',
-    description: 'Putzaufgaben mit Zuständigem, Intervall und nächstem Fälligkeitstermin.',
+    title: 'Cleaning rota',
+    description: 'Chores with assignee, interval and next due date.',
     path: ['chores'],
   }),
   resource({
     name: 'notes',
-    title: 'Pinnwand',
-    description: 'Ankündigungen mit Status, Reaktionen, Takers und Kommentaren.',
+    title: 'Noticeboard',
+    description: 'Posts with status, reactions, takers and comments.',
     path: ['announcements'],
   }),
   resource({
     name: 'chat',
-    title: 'Chatverlauf',
-    description: 'Die 50 neuesten Chatnachrichten inklusive Reaktionen und Mentions.',
+    title: 'Chat',
+    description: 'The 50 newest chat messages with reactions and mentions.',
     path: ['chat', 'messages'],
     query: { limit: 50 },
   }),
   resource({
     name: 'events',
-    title: 'Kalender',
-    description: 'WG-Termine mit Zeiten, Ort und Wiederholungsregel.',
+    title: 'Calendar',
+    description: 'Flat events with times, location and recurrence rule.',
     path: ['events'],
   }),
   resource({
     name: 'absences',
-    title: 'Abwesenheiten',
-    description: 'Laufende und künftige Abwesenheiten der Mitglieder.',
+    title: 'Absences',
+    description: 'Current and upcoming absences of the members.',
     path: ['absences'],
   }),
   resource({
     name: 'activity',
-    title: 'Aktivitätsverlauf',
-    description: 'Chronologische Timeline aller Änderungen plus aktive Reminder.',
+    title: 'Activity feed',
+    description: 'Chronological timeline of all changes plus active reminders.',
     path: ['activity'],
   }),
   resource({
     name: 'wg',
-    title: 'Eigene WGs',
+    title: 'Your flats',
     description:
-      'Alle WGs des angemeldeten Accounts mit name, code und memberId (Route /api/wg/mine).',
+      'All flats of the signed-in account with name, code and memberId (route /api/wg/mine).',
     path: ['mine'],
     scope: 'account',
   }),
@@ -132,13 +131,13 @@ function entityResource(
 
 /** Single-entity URIs for the routes that answer GET on their own. */
 export const RESOURCE_TEMPLATE_DEFS: ResourceTemplateDef[] = [
-  entityResource('event', 'Termin', 'Einzelner Kalendereintrag nach id (events/[id]).', ['events']),
-  entityResource('chore', 'Putzaufgabe', 'Einzelne Putzaufgabe nach id (chores/[id]).', ['chores']),
-  entityResource('member', 'Mitglied', 'Einzelnes Mitglied nach id (members/[id]).', ['members']),
+  entityResource('event', 'Event', 'One calendar event by id (events/[id]).', ['events']),
+  entityResource('chore', 'Chore', 'One chore by id (chores/[id]).', ['chores']),
+  entityResource('member', 'Member', 'One member by id (members/[id]).', ['members']),
   entityResource(
     'recurring',
-    'Fixkosten-Template',
-    'Einzelnes Fixkosten-Template nach id (recurring-expenses/[id]).',
+    'Fixed-cost template',
+    'One fixed-cost template by id (recurring-expenses/[id]).',
     ['recurring-expenses'],
   ),
 ];

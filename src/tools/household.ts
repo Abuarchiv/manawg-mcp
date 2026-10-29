@@ -1,30 +1,23 @@
 import { z } from 'zod';
-import { isMemberToken } from '../ids.js';
-import { uuid } from './shared.js';
 import { defineTool } from './types.js';
-
-const legacyMemberToken = z
-  .string()
-  .trim()
-  .refine(isMemberToken, { message: 'expected 64 hex characters' });
 
 const importSource = z.enum(['splitwise_csv', 'splid_csv', 'ocr_text']);
 
 export const householdTools = [
   defineTool({
     name: 'calendar_subscription_get',
-    title: 'Kalender-Abo lesen',
+    title: 'Read the calendar subscription',
     description:
-      'Eigene Kalender-Subscription der WG: subscription { feedUrl, createdAt, updatedAt } — oder subscription null, wenn keine aktive existiert. Die feedUrl in eine Kalender-App abonnieren; sie enthält einen Geheimtoken und wird deshalb nie in Chats geteilt.',
+      'Your own calendar subscription for the flat: subscription { feedUrl, createdAt, updatedAt }, or subscription null when none is active. Subscribe to feedUrl in a calendar app; it contains a secret token, so never share it in chats.',
     method: 'GET',
     input: z.strictObject({}),
     path: () => ['calendar-subscription'],
   }),
   defineTool({
     name: 'import_preview',
-    title: 'Import vorberechnen',
+    title: 'Preview an import',
     description:
-      'Parst splitwise_csv, splid_csv oder ocr_text (payload als String) ohne etwas zu schreiben: parsed, payloadHash, memberMapping, conflicts und members. memberMapping (Name → memberId oder null) legt die Zuordnung fest, sonst greift der automatische Namensabgleich. Danach import_commit mit gleichem payload und payloadHash aufrufen.',
+      'Parses splitwise_csv, splid_csv or ocr_text (payload as a string) without writing anything: parsed, payloadHash, memberMapping, conflicts and members. memberMapping (name → memberId or null) sets the matching, otherwise names are matched automatically. Then call import_commit with the same payload and payloadHash.',
     method: 'POST',
     input: z.strictObject({
       source: importSource,
@@ -37,9 +30,9 @@ export const householdTools = [
   }),
   defineTool({
     name: 'import_commit',
-    title: 'Import ausführen',
+    title: 'Commit an import',
     description:
-      'Schreibt die geparsten Ausgaben (skipDuplicates default true). memberMapping ist vollständig und uuid-gebunden; previewPayloadHash aus import_preview schützt vor geändertem payload (payload_changed), skipIndexes ohne Hash liefert preview_hash_required. Antworten von import_preview und import_commit müssen dieselbe payload besitzen.',
+      'Writes the parsed expenses (skipDuplicates default true). memberMapping is complete and maps to uuids; previewPayloadHash from import_preview guards against a changed payload (payload_changed), skipIndexes without the hash gives preview_hash_required. import_preview and import_commit must get the same payload.',
     method: 'POST',
     gate: 'destructive',
     input: z.strictObject({
@@ -54,24 +47,10 @@ export const householdTools = [
     body: (input) => input,
   }),
   defineTool({
-    name: 'member_claim',
-    title: 'Mitglied mit Account verknüpfen',
-    description:
-      'Verknüpft das angemeldete Konto dauerhaft mit einem Altbestands-Mitglied (id). Dafür braucht die App den Legacy-Beweis legacyMemberToken, den nur das Mitglied aus seinem alten Einladungslink kennt; ohne gültigen Beweis legacy_proof_required. Weitere Fehler: account_already_linked, member_already_linked, member_deactivated. Danach ist der Account-Inhaber dieses Mitglied.',
-    method: 'POST',
-    gate: 'destructive',
-    input: z.strictObject({ id: uuid, legacyMemberToken }),
-    path: (input) => ['members', input.id, 'claim'],
-    headers: (input) => ({
-      'x-manawg-member-id': input.id,
-      'x-manawg-member-token': input.legacyMemberToken,
-    }),
-  }),
-  defineTool({
     name: 'wg_create',
-    title: 'Neue WG anlegen',
+    title: 'Create a new flat',
     description:
-      'Legt eine neue WG an (name 1..100, creatorName 1..80) und liefert wg { id, shareCode, name } sowie creator { id, name } zurück. Account-scoped, hängt aber nicht an die aktuelle WG; anschließend mit MANAWG_WG_CODE neu verbinden, um sie zu nutzen. 3 Anfragen pro Stunde (wg_create_rate_limited).',
+      'Creates a new flat (name 1..100, creatorName 1..80) and returns wg { id, shareCode, name } and creator { id, name }. Account-scoped and not tied to the current flat; reconnect with MANAWG_WG_CODE to use it. 3 requests per hour (wg_create_rate_limited).',
     method: 'POST',
     gate: 'destructive',
     scope: 'account',

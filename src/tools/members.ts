@@ -19,9 +19,9 @@ const notifyFlags = z.strictObject({
 export const memberTools = [
   defineTool({
     name: 'members_list',
-    title: 'Mitglieder auflisten',
+    title: 'List members',
     description:
-      'Alle Mitglieder mit id, name, color, active und viewerIsAdmin; pagination total/limit/offset. limit max 500 (default 100).',
+      'All members with id, name, color, active and viewerIsAdmin; pagination total/limit/offset. limit max 500 (default 100).',
     method: 'GET',
     input: z.strictObject({
       limit: z.number().int().min(1).max(500).default(100),
@@ -32,17 +32,17 @@ export const memberTools = [
   }),
   defineTool({
     name: 'member_get',
-    title: 'Mitglied und offene Salden lesen',
-    description: 'Ein Mitglied plus openBalances (direction owes|owed).',
+    title: 'Read a member and their open balances',
+    description: 'One member plus openBalances (direction owes|owed).',
     method: 'GET',
     input: z.strictObject({ id: uuid }),
     path: (input) => ['members', input.id],
   }),
   defineTool({
     name: 'member_update',
-    title: 'Mitglied ändern (Admin/sensibel)',
+    title: 'Change a member (admin, sensitive)',
     description:
-      'Setzt active false für einen reversiblen Auszug oder active true zur Reaktivierung. Erlaubt für das Mitglied selbst oder einen Admin (sonst not_owner); Admin-Mitglieder können nicht deaktiviert werden (admin_required). active ist erforderlich.',
+      'Sets active false for a reversible move-out or active true to reactivate. Allowed for the member themselves or an admin (otherwise not_owner); admin members cannot be deactivated (admin_required). active is required.',
     method: 'PATCH',
     gate: 'destructive',
     input: z.strictObject({
@@ -57,18 +57,18 @@ export const memberTools = [
   }),
   defineTool({
     name: 'notifications_get',
-    title: 'Benachrichtigungseinstellungen lesen',
+    title: 'Read notification settings',
     description:
-      'Alle notify*-Flags, quietStartHour/quietEndHour (0..23), pushOptIn und pushConfigured.',
+      'All notify* flags, quietStartHour/quietEndHour (0..23), pushOptIn and pushConfigured.',
     method: 'GET',
     input: z.strictObject({}),
     path: () => ['notifications'],
   }),
   defineTool({
     name: 'notifications_update',
-    title: 'Benachrichtigungseinstellungen ändern',
+    title: 'Change notification settings',
     description:
-      'Beliebige notify*-Flags und/oder Ruhezeiten 0..23 setzen (quiet_hours_invalid sonst). pushOptIn false löscht alle Push-Abos. Ohne Felder passiert nichts (antwortet ok).',
+      'Sets any notify* flags and/or quiet hours 0..23 (otherwise quiet_hours_invalid). pushOptIn false removes all push subscriptions. Without fields nothing happens (answers ok).',
     method: 'PATCH',
     input: notifyFlags,
     path: () => ['notifications'],
@@ -76,9 +76,9 @@ export const memberTools = [
   }),
   defineTool({
     name: 'wg_update',
-    title: 'WG-Einstellungen ändern (Admin)',
+    title: 'Change flat settings (admin)',
     description:
-      'name 1..100, joiningEnabled schaltet den Beitritt um, rotateShareCode true erzeugt einen NEUEN 8-stelligen Beitrittscode und aktiviert joining — der alte Code funktioniert danach nicht mehr — und MANAWG_WG_CODE dieses Servers muss dann auf den neuen Code umgestellt werden, sonst antworten alle weiteren Aufrufe mit wg_not_found. Nur Admin (not_admin), mindestens ein Feld.',
+      'name 1..100, joiningEnabled turns joining on or off, rotateShareCode true creates a NEW 8-character join code and turns joining on. The old code stops working, and MANAWG_WG_CODE of this server must then be set to the new code, otherwise every further call answers wg_not_found. Admins only (not_admin), at least one field.',
     method: 'PATCH',
     gate: 'destructive',
     input: z.strictObject({

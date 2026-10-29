@@ -6,9 +6,15 @@
 
 - `paypal_order_create` and `paypal_capture`: the app no longer has PayPal. Their error codes and
   the `paypalMerchantId` mentions in the member tools are gone.
+- `member_claim`: the app removed its claim route for members from before accounts, so the tool,
+  the request headers it needed and the codes `account_already_linked`, `member_already_linked` and
+  `legacy_proof_required` are gone.
 
 ### Added
 
+- `category` on `expense_create`, `expense_update`, `recurring_create` and `recurring_update`
+  (`groceries|household|housing|leisure|transport|other`); expenses created here no longer all land
+  in `other`.
 - `cash_payment_record` and `cash_payment_void`† for entering and taking back a cash payment over
   the net debt of a pair (`/api/wg/<code>/payments/manual`).
 
@@ -26,7 +32,6 @@
   mentions, `event_update` can clear `description`/`location`/`recurrence`/`endsAt` with `null`.
 - `export_get` returned `{}` for `format: csv`; non-JSON responses now come back as
   `{ contentType, content }`, `sections` is sent for JSON, and oversized strings are capped.
-- `member_claim` sends the legacy proof headers (`legacyMemberToken` input) the app requires.
 - The error allowlist grew from 130 to 239 codes, so conflicts such as `chore_changed`,
   `expense_conflict`, `not_admin`, `message_deleted` or `payload_changed` reach the model instead of
   `upstream_http_409`.
@@ -46,6 +51,10 @@
 
 ### Changed
 
+- Tool titles and descriptions, resources and prompts are in English. The prompts answer in the
+  language of the conversation; their arguments are now `focus` (`daily_brief`) and `tone`
+  (`payment_reminder`) instead of `fokus` and `ton`.
+- The inventory tools use the app's English keys for `unit` and `category`.
 - The member identity bootstrap, `identity.json` and `MANAWG_MEMBER_ID` / `MANAWG_MEMBER_TOKEN` /
   `MANAWG_IDENTITY_CACHE` are gone: the app resolves the member from the session cookie and never
   returned a member token. The variables are ignored if still set.

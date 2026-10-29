@@ -19,9 +19,9 @@ const exportSection = z.enum([
 export const overviewTools = [
   defineTool({
     name: 'wg_list',
-    title: 'Eigene WGs auflisten',
+    title: 'List your flats',
     description:
-      'Alle WGs des angemeldeten Accounts mit name, code (Share-Code) und memberId — unabhängig von MANAWG_WG_CODE, damit ein Wechsel oder eine Wiederherstellung ohne lokalen Stand möglich ist.',
+      'All flats of the signed-in account with name, code (share code) and memberId, independent of MANAWG_WG_CODE, so switching or recovering works without local state.',
     method: 'GET',
     input: z.strictObject({}),
     path: () => ['mine'],
@@ -29,45 +29,45 @@ export const overviewTools = [
   }),
   defineTool({
     name: 'wg_overview',
-    title: 'WG-Übersicht',
+    title: 'Flat overview',
     description:
-      'Manifest der verbundenen WG: wg (name, shareCode, joiningEnabled), members (id, name, color) und currentMember. Startpunkt für jede Aufgabe — memberId-Werte von hier in alle anderen Tools verwenden.',
+      'Manifest of the connected flat: wg (name, shareCode, joiningEnabled), members (id, name, color) and currentMember. The starting point for every task; use the memberId values from here in all other tools.',
     method: 'GET',
     input: z.strictObject({}),
     path: () => [],
   }),
   defineTool({
     name: 'dashboard_get',
-    title: 'Dashboard lesen',
+    title: 'Read the dashboard',
     description:
-      'Kompaktes Gesamtbild: balances, spendByDay, Ausgabensummen (zent), openShoppingCount, openShoppingTop, dueChores, activity, latestAnnouncement, myOpenAnnouncements, dueRecurringExpenses, absentMembers, wgHealth, setup. Summen je Währung in totalSpendByCurrency/weekSpendByCurrency/monthSpendByCurrency.',
+      'Compact overall picture: balances, spendByDay, spending totals (cents), openShoppingCount, openShoppingTop, dueChores, activity, latestAnnouncement, myOpenAnnouncements, dueRecurringExpenses, absentMembers, wgHealth and setup. Totals per currency in totalSpendByCurrency/weekSpendByCurrency/monthSpendByCurrency.',
     method: 'GET',
     input: z.strictObject({}),
     path: () => ['dashboard'],
   }),
   defineTool({
     name: 'activity_get',
-    title: 'Aktivitätsverlauf lesen',
+    title: 'Read the activity feed',
     description:
-      'Chronologische Timeline (expenses, shopping, announcements, chores, recurring, absences, audit) plus aktiv Reminder (kind, title, detail, href; top 6). Lesezugriffe sind pro IP auf 120 Anfragen/Minute begrenzt.',
+      'Chronological timeline (expenses, shopping, announcements, chores, recurring, absences, audit) plus active reminders (kind, title, detail, href; top 6). Reads are limited to 120 requests per minute per IP.',
     method: 'GET',
     input: z.strictObject({}),
     path: () => ['activity'],
   }),
   defineTool({
     name: 'export_get',
-    title: 'WG-Daten exportieren',
+    title: 'Export flat data',
     description:
-      'Export der WG-Daten. format json liefert alle Abschnitte oder nur die in sections genannten; format csv liefert genau EINEN Abschnitt (section, ohne Angabe expenses) als { contentType, content }. Abschnitte: members, expenses, expensePayments, recurringExpenses, shoppingItems, chores, absences, announcements, announcementComments, events, chatMessages, auditEvents. limit bis 100000 und offset zum Blättern (members werden nie gepaged).',
+      'Export of the flat data. format json returns all sections or only those named in sections; format csv returns exactly ONE section (section, expenses when omitted) as { contentType, content }. Sections: members, expenses, expensePayments, recurringExpenses, shoppingItems, chores, absences, announcements, announcementComments, events, chatMessages, auditEvents. limit up to 100000 and offset for paging (members are never paged).',
     method: 'GET',
     input: z.strictObject({
       format: z.enum(['json', 'csv']).default('json'),
-      section: exportSection.optional().describe('Nur für format csv: der eine Abschnitt.'),
+      section: exportSection.optional().describe('Only for format csv: the one section.'),
       sections: z
         .array(exportSection)
         .min(1)
         .optional()
-        .describe('Nur für format json: auf diese Abschnitte beschränken.'),
+        .describe('Only for format json: limit the export to these sections.'),
       limit: z.number().int().min(1).max(100_000).optional(),
       offset: z.number().int().min(0).optional(),
     }),

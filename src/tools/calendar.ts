@@ -11,16 +11,16 @@ const eventRecurrence = z
   .trim()
   .max(200)
   .describe(
-    'RFC-5545-Teilmenge, ";"-getrennt: FREQ=DAILY|WEEKLY|MONTHLY|YEARLY (Pflicht), INTERVAL 1..365, BYDAY (MO..SU), COUNT 1..366, UNTIL. Sonst recurrence_invalid.',
+    'RFC 5545 subset, separated by ";": FREQ=DAILY|WEEKLY|MONTHLY|YEARLY (required), INTERVAL 1..365, BYDAY (MO..SU), COUNT 1..366, UNTIL. Otherwise recurrence_invalid.',
   );
 const reason = z.string().trim().max(120).nullable().optional();
 
 export const calendarTools = [
   defineTool({
     name: 'events_list',
-    title: 'Kalendereinträge lesen',
+    title: 'Read calendar events',
     description:
-      'WG-Termine im Fenster from..to (Datum oder ISO mit Offset; der Filter greift nur, wenn beide gesetzt sind). Zu viele Treffer (>1000) ergeben 503 events_window_too_large — dann das Fenster verkleinern.',
+      'Flat events in the window from..to (a date or ISO with offset; the filter applies only when both are set). Too many matches (>1000) give 503 events_window_too_large; then narrow the window.',
     method: 'GET',
     input: z.strictObject({ from: when.optional(), to: when.optional() }),
     path: () => ['events'],
@@ -28,17 +28,17 @@ export const calendarTools = [
   }),
   defineTool({
     name: 'event_get',
-    title: 'Kalendereintrag lesen',
-    description: 'Einzelner Termin; 404 event_not_found bei unbekannter id.',
+    title: 'Read a calendar event',
+    description: 'One event; 404 event_not_found for an unknown id.',
     method: 'GET',
     input: z.strictObject({ id: uuid }),
     path: (input) => ['events', input.id],
   }),
   defineTool({
     name: 'event_create',
-    title: 'Kalendereintrag anlegen',
+    title: 'Create a calendar event',
     description:
-      'title 1..200, startsAt ISO erforderlich (Jahre 1900..2200), endsAt danach (ends_before_start sonst), allDay default false, location/recurrence je max 200, description max 2000.',
+      'title 1..200, startsAt ISO required (years 1900..2200), endsAt not before it (otherwise ends_before_start), allDay default false, location/recurrence max 200 each, description max 2000. An all-day event keeps only the date: send the date at T00:00:00Z.',
     method: 'POST',
     input: z.strictObject({
       title: eventTitle,
@@ -54,9 +54,9 @@ export const calendarTools = [
   }),
   defineTool({
     name: 'event_update',
-    title: 'Kalendereintrag bearbeiten',
+    title: 'Edit a calendar event',
     description:
-      'Felder wie event_create, alle optional; nicht gesendete Felder bleiben unverändert, description/location/recurrence/endsAt lassen sich mit null leeren. Nur Ersteller oder Admin (not_owner).',
+      'Fields as in event_create, all optional; fields not sent stay unchanged, description/location/recurrence/endsAt can be cleared with null. Only the creator or an admin (not_owner).',
     method: 'PATCH',
     input: z.strictObject({
       id: uuid,
@@ -76,9 +76,9 @@ export const calendarTools = [
   }),
   defineTool({
     name: 'event_delete',
-    title: 'Kalendereintrag löschen',
+    title: 'Delete a calendar event',
     description:
-      'Entfernt den Termin dauerhaft (nur Ersteller oder Admin, sonst not_owner); vorher Datum/Details notieren, wenn sie noch gebraucht werden.',
+      'Removes the event for good (only the creator or an admin, otherwise not_owner); note the date and details first if they are still needed.',
     method: 'DELETE',
     gate: 'destructive',
     input: z.strictObject({ id: uuid }),
@@ -86,18 +86,18 @@ export const calendarTools = [
   }),
   defineTool({
     name: 'absences_list',
-    title: 'Abwesenheiten lesen',
+    title: 'Read absences',
     description:
-      'Künftige und laufende Abwesenheiten (endDate ab Tagesbeginn Berlin) mit id, memberId, memberName, startDate, endDate, reason.',
+      'Current and upcoming absences (endDate from the start of today in Berlin) with id, memberId, memberName, startDate, endDate and reason.',
     method: 'GET',
     input: z.strictObject({}),
     path: () => ['absences'],
   }),
   defineTool({
     name: 'absence_create',
-    title: 'Abwesenheit eintragen',
+    title: 'Record an absence',
     description:
-      'memberId (selbst oder Admin), startDate/endDate ISO, endDate >= startDate (date_range_invalid), reason max 120. 409 absence_overlaps_existing bei Überschneidung.',
+      'memberId (yourself, or anyone as an admin), startDate/endDate ISO, endDate >= startDate (date_range_invalid), reason max 120. 409 absence_overlaps_existing when it overlaps another absence.',
     method: 'POST',
     input: z.strictObject({
       memberId: uuid,
@@ -110,8 +110,8 @@ export const calendarTools = [
   }),
   defineTool({
     name: 'absence_delete',
-    title: 'Abwesenheit löschen',
-    description: 'Entfernt den Eintrag; erlaubt für die betroffene Person oder Admin (not_owner).',
+    title: 'Delete an absence',
+    description: 'Removes the entry; allowed for the absent person or an admin (not_owner).',
     method: 'DELETE',
     gate: 'destructive',
     input: z.strictObject({ id: uuid }),

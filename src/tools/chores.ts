@@ -7,26 +7,26 @@ const recurrenceType = z.enum(['days', 'months']);
 export const choreTools = [
   defineTool({
     name: 'chores_list',
-    title: 'Putzplan lesen',
+    title: 'Read the cleaning rota',
     description:
-      'Alle Aufgaben mit assignedMemberId, intervalDays, recurrenceType (days|months), nextDueAt, lastCompletedAt.',
+      'All chores with assignedMemberId, intervalDays, recurrenceType (days|months), nextDueAt and lastCompletedAt.',
     method: 'GET',
     input: z.strictObject({}),
     path: () => ['chores'],
   }),
   defineTool({
     name: 'chore_get',
-    title: 'Putzaufgabe einzeln lesen',
-    description: 'Eine Aufgabe im Detail; 404 chore_not_found bei unbekannter id.',
+    title: 'Read one chore',
+    description: 'One chore in detail; 404 chore_not_found for an unknown id.',
     method: 'GET',
     input: z.strictObject({ id: uuid }),
     path: (input) => ['chores', input.id],
   }),
   defineTool({
     name: 'chore_create',
-    title: 'Putzaufgabe anlegen',
+    title: 'Create a chore',
     description:
-      'title 1..120, intervalDays (default 7) 1..365 Tage; mit recurrenceType months ist intervalDays die Anzahl Monate (1..60). nextDueAt ISO optional, assignedMemberId optional (muss Mitglied sein).',
+      'title 1..120, intervalDays (default 7) 1..365 days; with recurrenceType months, intervalDays is the number of months (1..60). nextDueAt ISO optional, assignedMemberId optional (must be a member).',
     method: 'POST',
     input: z.strictObject({
       title: z.string().trim().min(1).max(120),
@@ -40,9 +40,9 @@ export const choreTools = [
   }),
   defineTool({
     name: 'chore_update',
-    title: 'Putzaufgabe bearbeiten',
+    title: 'Edit a chore',
     description:
-      'Jedes Mitglied darf bearbeiten. assignedMemberId null entzieht die Zuweisung; nextDueAt/intervalDays/recurrenceType verschieben den Turnus (bei months ist intervalDays die Monatszahl). 409 chore_changed bei gleichzeitiger Änderung des Turnus: neu lesen.',
+      'Any member may edit. assignedMemberId null removes the assignment; nextDueAt/intervalDays/recurrenceType move the cycle (with months, intervalDays is the number of months). 409 chore_changed when the cycle changed at the same time: read again.',
     method: 'PATCH',
     input: z.strictObject({
       id: uuid,
@@ -59,9 +59,9 @@ export const choreTools = [
   }),
   defineTool({
     name: 'chore_complete',
-    title: 'Putzaufgabe erledigen',
+    title: 'Complete a chore',
     description:
-      'Vorher chores_list lesen; nextDueAt als expectedNextDueAt und assignedMemberId (UUID oder null) als expectedAssignedMemberId exakt mitsenden. 409 chore_occurrence_changed: neu lesen und erneut entscheiden, nicht blind wiederholen; chore_already_completed: der Durchlauf ist schon erledigt.',
+      'Read chores_list first; send nextDueAt as expectedNextDueAt and assignedMemberId (UUID or null) as expectedAssignedMemberId exactly. 409 chore_occurrence_changed: read again and decide again, do not retry blindly; chore_already_completed: this round is already done.',
     method: 'POST',
     input: z.strictObject({
       id: uuid,
@@ -76,9 +76,9 @@ export const choreTools = [
   }),
   defineTool({
     name: 'chore_delete',
-    title: 'Putzaufgabe löschen',
+    title: 'Delete a chore',
     description:
-      'Entfernt die Aufgabe und ihren Verlauf endgültig — nur bei fehlerhaften Anlagen. Nur Admin (admin_required).',
+      'Removes the chore and its history for good; only for chores created by mistake. Admins only (admin_required).',
     method: 'DELETE',
     gate: 'destructive',
     input: z.strictObject({ id: uuid }),

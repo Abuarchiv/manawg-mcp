@@ -12,7 +12,6 @@ type ToolSpec<TInput extends z.ZodType> = {
   path: (input: z.output<TInput>) => string[];
   query?: (input: z.output<TInput>) => QueryParams;
   body?: (input: z.output<TInput>) => unknown;
-  headers?: (input: z.output<TInput>) => Record<string, string>;
   /** `destructive` tools are only registered when `MANAWG_ALLOW_DESTRUCTIVE` is set. */
   gate?: ToolGate;
   scope?: RequestScope;

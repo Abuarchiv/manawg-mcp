@@ -105,7 +105,6 @@ export function registerTool(server: McpServer, client: ManaWgClient, def: ToolD
         ...(def.scope ? { scope: def.scope } : {}),
         ...(def.query ? { query: def.query(args) } : {}),
         ...(def.body ? { body: def.body(args) } : {}),
-        ...(def.headers ? { headers: def.headers(args) } : {}),
       };
       try {
         const upstream = await client.call(request);
