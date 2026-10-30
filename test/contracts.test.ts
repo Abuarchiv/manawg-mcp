@@ -40,7 +40,6 @@ it.each([
   ],
   ['recurring_advance', { id: ID }],
   ['recurring_advance', { id: ID, expectedNextDueAt: NOW, amountCents: 1 }],
-  ['member_claim', { id: ID, legacyMemberToken: 'short' }],
   ['chore_create', { title: 'Bad', recurrenceType: 'weekly' }],
   ['chore_create', { title: 'Bad', intervalMonths: 2 }],
   ['chat_send', { body: 'hi', mentionMemberIds: Array.from({ length: 21 }, () => ID) }],
@@ -58,13 +57,6 @@ it('sends the request shapes the app expects', async () => {
   const { client, fake } = await connect();
   const call = (name: string, args: Record<string, unknown>) =>
     client.callTool({ name, arguments: args });
-
-  await call('member_claim', { id: ID, legacyMemberToken: 'f'.repeat(64) });
-  expect(fake.call).toHaveBeenLastCalledWith({
-    method: 'POST',
-    path: ['members', ID, 'claim'],
-    headers: { 'x-manawg-member-id': ID, 'x-manawg-member-token': 'f'.repeat(64) },
-  });
 
   await call('export_get', { sections: ['members', 'events'] });
   expect(fake.call).toHaveBeenLastCalledWith({

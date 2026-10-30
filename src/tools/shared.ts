@@ -11,4 +11,12 @@ export const splitSchema = z
 export const amountCents = z.number().int().min(1).max(100_000_000);
 export const currency = z.enum(['EUR', 'CHF', 'USD', 'GBP']).default('EUR');
 export const description = z.string().trim().min(1).max(200);
+export const expenseCategory = z.enum([
+  'groceries',
+  'household',
+  'housing',
+  'leisure',
+  'transport',
+  'other',
+]);
 export const imageUrl = z.string().trim().max(2048).optional();

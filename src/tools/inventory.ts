@@ -2,8 +2,8 @@ import { z } from 'zod';
 import { uuid } from './shared.js';
 import { defineTool } from './types.js';
 
-const units = z.enum(['Stück', 'L', 'kg', 'Rolle', 'Packung']);
-const categories = z.enum(['bad', 'kueche', 'putzmittel', 'sonstiges']);
+const units = z.enum(['piece', 'litre', 'kilogram', 'roll', 'pack']);
+const categories = z.enum(['bathroom', 'kitchen', 'cleaning', 'other']);
 const itemName = z.string().trim().min(1).max(120);
 const quantity = z.number().int().min(0).max(9999);
 const threshold = z.number().int().min(0).max(9999);
@@ -11,34 +11,34 @@ const threshold = z.number().int().min(0).max(9999);
 export const inventoryTools = [
   defineTool({
     name: 'inventory_list',
-    title: 'Vorräte lesen',
+    title: 'Read supplies',
     description:
-      'Alle Vorratsartikel mit quantity, unit, threshold, category, decrementCount30d. Niedrigbestand = quantity <= threshold.',
+      'All supply items with quantity, unit, threshold, category and decrementCount30d. Low stock means quantity <= threshold.',
     method: 'GET',
     input: z.strictObject({}),
     path: () => ['inventory'],
   }),
   defineTool({
     name: 'inventory_add',
-    title: 'Vorratsartikel anlegen',
+    title: 'Add a supply item',
     description:
-      'name 1..120; quantity 0..9999 (default 0), unit Stück|L|kg|Rolle|Packung, threshold 0..9999 (default 1), category bad|kueche|putzmittel|sonstiges (default sonstiges).',
+      'name 1..120; quantity 0..9999 (default 0), unit piece|litre|kilogram|roll|pack, threshold 0..9999 (default 1), category bathroom|kitchen|cleaning|other (default other).',
     method: 'POST',
     input: z.strictObject({
       name: itemName,
       quantity: quantity.default(0),
-      unit: units.default('Stück'),
+      unit: units.default('piece'),
       threshold: threshold.default(1),
-      category: categories.default('sonstiges'),
+      category: categories.default('other'),
     }),
     path: () => ['inventory'],
     body: (input) => input,
   }),
   defineTool({
     name: 'inventory_update',
-    title: 'Vorratsartikel bearbeiten',
+    title: 'Edit a supply item',
     description:
-      'quantityDelta (-9999..9999) zählt um, quantity setzt absolut (dann expectedQuantity und expectedUpdatedAt Pflicht). Bei Versionssprung 409 version_conflict neu lesen. mindestens ein Feld nötig (empty_update).',
+      'quantityDelta (-9999..9999) counts up or down, quantity sets an absolute value (then expectedQuantity and expectedUpdatedAt are required). On 409 version_conflict read again. At least one field is needed (empty_update).',
     method: 'PATCH',
     input: z.strictObject({
       id: uuid,
@@ -59,9 +59,9 @@ export const inventoryTools = [
   }),
   defineTool({
     name: 'inventory_consume',
-    title: 'Bestand abbuchen',
+    title: 'Use up stock',
     description:
-      'delta -100..-1 (z. B. -1 für ein Stück entnommen). Antwort mit clamped (true wenn auf 0 begrenzt) und autoPushedShoppingItemId (Bestellvorschlag). 409 version_conflict bei gleichzeitiger Änderung.',
+      'delta -100..-1 (for example -1 when one piece was taken). The answer has clamped (true when limited to 0) and autoPushedShoppingItemId (item added to the shopping list). 409 version_conflict on a concurrent change.',
     method: 'POST',
     input: z.strictObject({ id: uuid, delta: z.number().int().min(-100).max(-1) }),
     path: (input) => ['inventory', input.id, 'consume'],
@@ -69,8 +69,8 @@ export const inventoryTools = [
   }),
   defineTool({
     name: 'inventory_remove',
-    title: 'Vorratsartikel löschen',
-    description: 'Entfernt den Artikel samt Verlauf dauerhaft.',
+    title: 'Delete a supply item',
+    description: 'Removes the item and its history for good.',
     method: 'DELETE',
     gate: 'destructive',
     input: z.strictObject({ id: uuid }),

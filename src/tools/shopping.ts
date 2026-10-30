@@ -8,18 +8,18 @@ const quantity = z.string().trim().min(1).max(40).optional();
 export const shoppingTools = [
   defineTool({
     name: 'shopping_list',
-    title: 'Einkaufsliste lesen',
+    title: 'Read the shopping list',
     description:
-      'Alle offenen Artikel (älteste zuerst) gefolgt von bis zu 1000 zuletzt gekauften. Enthält addedBy/addedByName, boughtBy, boughtAt und updatedAt; beide Zeitstempel für shopping_set_bought verwenden.',
+      'All open items (oldest first) followed by up to 1000 recently bought ones. Contains addedBy/addedByName, boughtBy, boughtAt and updatedAt; use both timestamps for shopping_set_bought.',
     method: 'GET',
     input: z.strictObject({}),
     path: () => ['shopping'],
   }),
   defineTool({
     name: 'shopping_add',
-    title: 'Einkaufsartikel hinzufügen',
+    title: 'Add a shopping item',
     description:
-      'Fügt der Liste hinzu: name 1..120, quantity max 40 (z. B. "2"), bought default false. 409 shopping_item_duplicate wenn derselbe name bereits offen ist.',
+      'Adds to the list: name 1..120, quantity max 40 (for example "2"), bought default false. 409 shopping_item_duplicate when the same name is already open.',
     method: 'POST',
     input: z.strictObject({
       name: itemName,
@@ -31,9 +31,9 @@ export const shoppingTools = [
   }),
   defineTool({
     name: 'shopping_set_bought',
-    title: 'Artikel als gekauft markieren',
+    title: 'Mark an item as bought',
     description:
-      'Vorher shopping_list lesen und updatedAt sowie boughtAt (oder null) exakt mitsenden. 409 shopping_item_changed: neu lesen und erneut entscheiden. boughtBy wird automatisch zum Aufrufer gesetzt.',
+      'Read shopping_list first and send updatedAt and boughtAt (or null) exactly. 409 shopping_item_changed: read again and decide again. boughtBy is set to the caller automatically.',
     method: 'PATCH',
     input: z.strictObject({
       id: uuid,
@@ -50,9 +50,9 @@ export const shoppingTools = [
   }),
   defineTool({
     name: 'shopping_remove',
-    title: 'Einkaufsartikel entfernen',
+    title: 'Remove a shopping item',
     description:
-      'Entfernt einen Artikel. Erlaubt für die eintragende Person oder einen Admin (sonst not_owner); unbekannte id: item_not_found.',
+      'Removes an item. Allowed for the person who added it or an admin (otherwise not_owner); unknown id: item_not_found.',
     method: 'DELETE',
     gate: 'destructive',
     input: z.strictObject({ id: uuid }),
@@ -60,9 +60,9 @@ export const shoppingTools = [
   }),
   defineTool({
     name: 'shopping_clear_bought',
-    title: 'Gekauftes leeren (Admin)',
+    title: 'Clear bought items (admin)',
     description:
-      'Löscht ALLE bereits gekauften Artikel der WG in einem Schritt (nur Admin, not_admin) — unwiderruflich, Rückgängigmachen nicht möglich.',
+      'Deletes ALL bought items of the flat in one step (admins only, not_admin). This cannot be undone.',
     method: 'DELETE',
     gate: 'destructive',
     input: z.strictObject({}),

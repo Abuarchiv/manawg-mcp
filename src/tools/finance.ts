@@ -3,6 +3,7 @@ import {
   amountCents,
   currency,
   description,
+  expenseCategory,
   imageUrl,
   isoDateTime,
   splitSchema,
@@ -20,9 +21,9 @@ const settlementPreview = z.looseObject({
 export const financeTools = [
   defineTool({
     name: 'expenses_list',
-    title: 'Ausgaben und Zahlungen lesen',
+    title: 'Read expenses and payments',
     description:
-      'Ausgaben nach occurredAt absteigend mit splits (debtorMemberId, amountCents, settledAt) sowie abgeschlossene payments. limit 1..500 (default 100) und offset blättern; Antwort enthält total und hasMore. Grundlage für offene Salden und settlement_preview.',
+      'Expenses by occurredAt, newest first, with splits (debtorMemberId, amountCents, settledAt) and recorded payments. Page with limit 1..500 (default 100) and offset; the answer has total and hasMore. Basis for open balances and settlement_preview.',
     method: 'GET',
     input: z.strictObject({
       limit: z.number().int().min(1).max(500).default(100),
@@ -50,14 +51,15 @@ export const financeTools = [
   }),
   defineTool({
     name: 'expense_create',
-    title: 'Ausgabe anlegen',
+    title: 'Create an expense',
     description:
-      'Neue Ausgabe mit Schuldnersplits. amountCents 1..100000000, description max 200, splits 1..50 Einträge, Summe der splits muss exakt amountCents ergeben (error: splits_sum_mismatch). Der Anrufende muss payer oder debtor sein (paid_by_must_include_caller). Eine fällige Fixkosten-Buchung wird hier erfasst: recurringExpenseId und expectedRecurringNextDueAt (nextDueAt aus recurring_get) immer zusammen senden, dann legt die App die Ausgabe an und rückt das Template atomar weiter.',
+      'New expense with debtor splits. amountCents 1..100000000, description max 200, category groceries|household|housing|leisure|transport|other (default other), splits 1..50 entries whose sum must equal amountCents exactly (error: splits_sum_mismatch). The caller must be the payer or a debtor (paid_by_must_include_caller). A due fixed cost is booked here: always send recurringExpenseId and expectedRecurringNextDueAt (nextDueAt from recurring_get) together; the app then creates the expense and advances the template atomically.',
     method: 'POST',
     input: z
       .strictObject({
         amountCents,
         description,
+        category: expenseCategory.default('other'),
         splits: z.array(splitSchema).min(1).max(50),
         paidByMemberId: uuid.optional(),
         currency,
@@ -71,7 +73,7 @@ export const financeTools = [
           (input.recurringExpenseId === undefined) ===
           (input.expectedRecurringNextDueAt === undefined),
         {
-          message: 'recurringExpenseId und expectedRecurringNextDueAt nur gemeinsam',
+          message: 'recurringExpenseId and expectedRecurringNextDueAt only together',
           path: ['recurringExpenseId'],
         },
       ),
@@ -80,13 +82,14 @@ export const financeTools = [
   }),
   defineTool({
     name: 'expense_update',
-    title: 'Ausgabe bearbeiten',
+    title: 'Edit an expense',
     description:
-      'Nur der payer darf bearbeiten (not_payer). amountCents erfordert dann ebenfalls vollständige splits (splits_required_with_amount). expectedUpdatedAt (ISO) schützt vor Doppeländerungen: 409 expense_changed bedeutet erneut lesen und entscheiden.',
+      'Only the payer may edit (not_payer). amountCents also needs the complete splits (splits_required_with_amount). expectedUpdatedAt (ISO) guards against concurrent edits: 409 expense_changed means read again and decide.',
     method: 'PATCH',
     input: z.strictObject({
       id: uuid,
       description: description.optional(),
+      category: expenseCategory.optional(),
       amountCents: amountCents.optional(),
       currency: z.enum(['EUR', 'CHF', 'USD', 'GBP']).optional(),
       splits: z.array(splitSchema).min(1).max(50).optional(),
@@ -101,9 +104,9 @@ export const financeTools = [
   }),
   defineTool({
     name: 'expense_delete',
-    title: 'Ausgabe löschen',
+    title: 'Delete an expense',
     description:
-      'Löscht eine Ausgabe endgültig — nur bei Tippfehlern oder doppelter Erfassung nutzen. Erlaubt für payer oder beteiligte debtor (sonst not_owner).',
+      'Deletes an expense for good; use it only for typos or duplicate entries. Allowed for the payer or a debtor of the expense (otherwise not_owner).',
     method: 'DELETE',
     gate: 'destructive',
     input: z.strictObject({ id: uuid }),
@@ -111,9 +114,9 @@ export const financeTools = [
   }),
   defineTool({
     name: 'expense_split_settle',
-    title: 'Schuldsplit als beglichen markieren',
+    title: 'Mark a split as settled',
     description:
-      'Setzt settled (default true) auf einem einzelnen split: person bezahlt bar zurück, ohne dass sich die Ausgabe ändert. Nur debtor oder payer (not_split_party).',
+      'Sets settled (default true) on a single split: the person paid back in cash, the expense itself stays unchanged. Only the debtor or the payer (not_split_party).',
     method: 'POST',
     input: z.strictObject({
       id: uuid,
@@ -125,9 +128,9 @@ export const financeTools = [
   }),
   defineTool({
     name: 'settlement_preview',
-    title: 'Ausgleich vorberechnen',
+    title: 'Preview a settlement',
     description:
-      'Berechnet netCents, settleableCents, remainingCents und betroffene splits für die Richtung fromMemberId → toMemberId. Der Aufrufende muss eine der beiden Parteien sein (not_party_to_debt). Ergebnis unverändert als expected an settlement_commit übergeben.',
+      'Computes netCents, settleableCents, remainingCents and the affected splits for the direction fromMemberId → toMemberId. The caller must be one of the two parties (not_party_to_debt). Pass the result unchanged as expected to settlement_commit.',
     method: 'GET',
     input: z.strictObject({ fromMemberId: uuid, toMemberId: uuid, currency }),
     path: () => ['expenses', 'settle-batch'],
@@ -139,9 +142,9 @@ export const financeTools = [
   }),
   defineTool({
     name: 'settlement_commit',
-    title: 'Ausgleich ausführen',
+    title: 'Commit a settlement',
     description:
-      'Setzt mehrere offene splits in einem Schritt als beglichen. expected ist das Ergebnis von settlement_preview unverändert (der MCP reicht nur currency, netCents, settleableCents und splits[id, amountCents] an die App weiter); sonst 409 settlement_changed — dann neu previewen.',
+      'Marks several open splits as settled in one step. expected is the unchanged result of settlement_preview (the MCP server forwards only currency, netCents, settleableCents and splits[id, amountCents]); otherwise 409 settlement_changed, then preview again.',
     method: 'POST',
     input: z.strictObject({
       fromMemberId: uuid,
@@ -163,9 +166,9 @@ export const financeTools = [
   }),
   defineTool({
     name: 'cash_payment_record',
-    title: 'Barzahlung eintragen',
+    title: 'Record a cash payment',
     description:
-      'Trägt eine bereits erfolgte Barzahlung über die ganze aktuelle Netto-Schuld fromMemberId → toMemberId ein; ManaWG überweist nichts. Der Aufrufende muss eine der beiden Parteien sein (not_party_to_debt). expectedNetCents ist netCents aus settlement_preview; hat sich die Schuld seitdem geändert, kommt 409 settlement_changed — dann neu previewen. Beide müssen noch aktiv in der WG sein (member_not_in_wg). Benachrichtigt die andere Partei.',
+      'Records a cash payment that already happened, over the whole current net debt fromMemberId → toMemberId; ManaWG moves no money. The caller must be one of the two parties (not_party_to_debt). expectedNetCents is netCents from settlement_preview; if the debt changed since, the answer is 409 settlement_changed, then preview again. Both must still be active in the flat (member_not_in_wg). Notifies the other party.',
     method: 'POST',
     input: z.strictObject({
       fromMemberId: uuid,
@@ -178,9 +181,9 @@ export const financeTools = [
   }),
   defineTool({
     name: 'cash_payment_void',
-    title: 'Barzahlung stornieren',
+    title: 'Void a cash payment',
     description:
-      'Storniert eine eingetragene Barzahlung (id aus expenses_list payments); die Schuld ist danach wieder offen. Nur eine der beiden Parteien (not_party_to_debt); payment_not_found oder 409 payment_voided, wenn es sie nicht (mehr) gibt. Korrigieren heißt stornieren und neu eintragen. Benachrichtigt die andere Partei.',
+      'Voids a recorded cash payment (id from expenses_list payments); the debt is open again afterwards. Only one of the two parties (not_party_to_debt); payment_not_found or 409 payment_voided when it does not exist (any more). To correct one, void it and record it again. Notifies the other party.',
     method: 'DELETE',
     gate: 'destructive',
     input: z.strictObject({ id: uuid }),
@@ -188,27 +191,27 @@ export const financeTools = [
   }),
   defineTool({
     name: 'balances_get',
-    title: 'Offene Salden lesen',
+    title: 'Read open balances',
     description:
-      'Offene Forderungen des Aufrufenden (Gläubigersicht): je Schuldner debtor_id, debtor_name, amount_cents, currency, oldest_age_days. Leer, wenn dem Aufrufenden nichts geschuldet wird; Schulden anderer Mitglieder untereinander stehen in dashboard_get.',
+      'What others owe the caller (creditor view): per debtor debtor_id, debtor_name, amount_cents, currency, oldest_age_days. Empty when nobody owes the caller anything; debts between other members are in dashboard_get.',
     method: 'GET',
     input: z.strictObject({}),
     path: () => ['reminders', 'balances'],
   }),
   defineTool({
     name: 'reminders_list',
-    title: 'Erinnerungshistorie lesen',
+    title: 'Read the reminder history',
     description:
-      'Versandte Mahnungen der letzten 30 Tage (max 50 Einträge) mit channel, message, amountCents, currency, oldestDebtAgeDays und sentAt.',
+      'Reminders sent in the last 30 days (max 50 entries) with channel, message, amountCents, currency, oldestDebtAgeDays and sentAt.',
     method: 'GET',
     input: z.strictObject({}),
     path: () => ['reminders'],
   }),
   defineTool({
     name: 'reminder_send',
-    title: 'Mahnung senden',
+    title: 'Send a payment reminder',
     description:
-      'Sendet dem Schuldner eine Erinnerung (channel push oder inapp) — benachrichtigt einen Menschen, deshalb nur auf ausdrücklichen Wunsch. Nur der Gläubiger oder ein Admin darf senden (not_creditor); ohne offene Schuld no_open_debt, 48 h Cooldown (reminder_cooldown), bei zu häufigem Senden reminder_rate_limited.',
+      'Sends the debtor a reminder (channel push or inapp). It notifies a person, so only on an explicit request. Only the creditor or an admin may send (not_creditor); without an open debt no_open_debt, a 48 h cooldown (reminder_cooldown), reminder_rate_limited when sent too often.',
     method: 'POST',
     gate: 'destructive',
     input: z.strictObject({

@@ -86,7 +86,6 @@
     "POST /api/wg/{code}/invites",
     "POST /api/wg/{code}/members",
     "POST /api/wg/{code}/members/{id}/admin",
-    "POST /api/wg/{code}/members/{id}/claim",
     "POST /api/wg/{code}/notifications",
     "POST /api/wg/{code}/payments/manual",
     "POST /api/wg/{code}/recurring-expenses",

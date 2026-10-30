@@ -1,34 +1,42 @@
 import { z } from 'zod';
-import { amountCents, description, isoDateTime, splitSchema, uuid } from './shared.js';
+import {
+  amountCents,
+  description,
+  expenseCategory,
+  isoDateTime,
+  splitSchema,
+  uuid,
+} from './shared.js';
 import { defineTool } from './types.js';
 
 export const recurringTools = [
   defineTool({
     name: 'recurring_list',
-    title: 'Fixkosten lesen',
+    title: 'Read fixed costs',
     description:
-      'Alle wiederkehrenden Ausgaben (max 500) mit intervalMonths, nextDueAt, pausedAt, splits. serialize liefert currency fix EUR.',
+      'All recurring expenses (max 500) with category, intervalMonths, nextDueAt, pausedAt and splits. currency is always EUR.',
     method: 'GET',
     input: z.strictObject({}),
     path: () => ['recurring-expenses'],
   }),
   defineTool({
     name: 'recurring_get',
-    title: 'Fixkosten einzeln lesen',
+    title: 'Read one fixed cost',
     description:
-      'Einzelne Fixkosten-Template inklusive splits; 404 recurring_expense_not_found bei unbekannter id.',
+      'One fixed-cost template with its splits; 404 recurring_expense_not_found for an unknown id.',
     method: 'GET',
     input: z.strictObject({ id: uuid }),
     path: (input) => ['recurring-expenses', input.id],
   }),
   defineTool({
     name: 'recurring_create',
-    title: 'Fixkosten anlegen',
+    title: 'Create a fixed cost',
     description:
-      'Wiederkehrende Ausgabe: description max 200, amountCents 1..100000000 (nur EUR, sonst recurring_currency_unsupported), intervalMonths 1..24, nextDueAt ISO (max 366 Tage in der Vergangenheit), splits 1..50 mit Summe == amountCents.',
+      'Recurring expense: description max 200, category (default other), amountCents 1..100000000 (EUR only, otherwise recurring_currency_unsupported), intervalMonths 1..24, nextDueAt ISO (at most 366 days in the past), splits 1..50 whose sum equals amountCents.',
     method: 'POST',
     input: z.strictObject({
       description,
+      category: expenseCategory.default('other'),
       amountCents,
       paidByMemberId: uuid,
       nextDueAt: isoDateTime,
@@ -41,13 +49,14 @@ export const recurringTools = [
   }),
   defineTool({
     name: 'recurring_update',
-    title: 'Fixkosten bearbeiten oder pausieren',
+    title: 'Edit or pause a fixed cost',
     description:
-      'Nur Ersteller oder Admin (not_owner). paused pausiert/aktiviert; alle anderen Felder ändern das Template. expectedNextDueAt (nextDueAt aus recurring_get) schützt vor Doppeländerungen: 409 recurring_expense_changed bedeutet erneut lesen und entscheiden.',
+      'Only the creator or an admin (not_owner). paused pauses or resumes; every other field changes the template. expectedNextDueAt (nextDueAt from recurring_get) guards against concurrent edits: 409 recurring_expense_changed means read again and decide.',
     method: 'PATCH',
     input: z.strictObject({
       id: uuid,
       description: description.optional(),
+      category: expenseCategory.optional(),
       amountCents: amountCents.optional(),
       currency: z.enum(['EUR', 'CHF', 'USD', 'GBP']).optional(),
       paidByMemberId: uuid.optional(),
@@ -65,9 +74,9 @@ export const recurringTools = [
   }),
   defineTool({
     name: 'recurring_advance',
-    title: 'Fixkosten jetzt fortschreiben',
+    title: 'Advance a fixed cost now',
     description:
-      'Rückt NUR nextDueAt um intervalMonths weiter, ohne eine Ausgabe anzulegen (jedes Mitglied darf das). expectedNextDueAt (nextDueAt aus recurring_get) ist Pflicht und schützt vor Doppelbuchung: 409 recurring_expense_already_advanced, wenn der Zyklus schon fortgeschrieben wurde; pausierte Templates liefern abo_paused. Um die fällige Zahlung zu buchen, stattdessen expense_create mit recurringExpenseId + expectedRecurringNextDueAt nutzen — das legt die Ausgabe an und rückt das Template atomar weiter.',
+      'Moves ONLY nextDueAt on by intervalMonths, without creating an expense (any member may do this). expectedNextDueAt (nextDueAt from recurring_get) is required and guards against double booking: 409 recurring_expense_already_advanced when the cycle was already advanced; a paused template answers recurring_paused. To book the due payment, use expense_create with recurringExpenseId + expectedRecurringNextDueAt instead: it creates the expense and advances the template atomically.',
     method: 'PATCH',
     input: z.strictObject({ id: uuid, expectedNextDueAt: isoDateTime }),
     path: () => ['recurring-expenses'],
@@ -75,9 +84,9 @@ export const recurringTools = [
   }),
   defineTool({
     name: 'recurring_delete',
-    title: 'Fixkosten löschen',
+    title: 'Delete a fixed cost',
     description:
-      'Entfernt das Template dauerhaft (kein weiterer Automausgleich). Nur Ersteller oder Admin; id als body.',
+      'Removes the template for good (no further automatic bookings). Only the creator or an admin; id goes in the body.',
     method: 'DELETE',
     gate: 'destructive',
     input: z.strictObject({ id: uuid }),

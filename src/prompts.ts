@@ -23,78 +23,78 @@ function prompt(
 export const PROMPT_DEFS: PromptDef[] = [
   prompt(
     'daily_brief',
-    'WG-Tagesbericht',
-    'Liest Dashboard, Aktivität, Einkauf, Putzplan und Kalender und liefert eine kompakte Lage.',
-    z.strictObject({ fokus: z.string().max(200).optional() }),
-    (args) => `Erstelle einen kompakten Tagesbericht für die WG.
+    'Daily flat brief',
+    'Reads the dashboard, activity, shopping, chores and calendar and gives a compact status.',
+    z.strictObject({ focus: z.string().max(200).optional() }),
+    (args) => `Write a compact daily brief for the flat.
 
-Vorgehen:
-1. dashboard_get für Salden, Ausgaben, offene Einkäufe, fällige Putzaufgaben und WG-Gesundheit.
-2. activity_get für Änderungen seit dem letzten Bericht.
-3. shopping_list und chores_list für offene Punkte.
-4. events_list und absences_list für die nächsten Termine und Abwesenheiten.
+Steps:
+1. dashboard_get for balances, spending, open shopping, due chores and flat health.
+2. activity_get for changes since the last brief.
+3. shopping_list and chores_list for open items.
+4. events_list and absences_list for the next events and absences.
 
-Ausgabe (deutsch, höchstens 10 Punkte, keine Tabellen):
-- Salden und auffällige Ausgaben
-- offene Einkäufe und wer eingekauft hat
-- fällige und überfällige Putzaufgaben
-- anstehende Termine und Abwesenheiten
-- Ankündigungen mit status open
-${args.fokus ? `\nZusätzlicher Fokus des Nutzers: ${args.fokus}` : ''}
-Nichts erfunden: jeder Punkt muss aus einer Tool-Antwort stammen; fehlende Daten kurz als "keine Daten" markieren.`,
+Answer in the language of the conversation, at most 10 bullets, no tables:
+- balances and notable expenses
+- open shopping and who bought what
+- due and overdue chores
+- upcoming events and absences
+- posts with status open
+${args.focus ? `\nThe user also wants to focus on: ${args.focus}` : ''}
+Invent nothing: every bullet must come from a tool answer; mark missing data briefly as "no data".`,
   ),
   prompt(
     'shopping_run',
-    'Einkaufstour planen',
-    'Fügt die Einkaufsliste mit Vorratsbestand zusammen und liefert eine gruppierte Tourliste.',
+    'Plan a shopping run',
+    'Combines the shopping list with the supplies and gives a grouped list for the run.',
     noArgs,
-    () => `Plane eine Einkaufstour für die WG.
+    () => `Plan a shopping run for the flat.
 
-Vorgehen:
-1. shopping_list für alle offenen und gekauften Artikel.
-2. inventory_list, um zu prüfen, was bereits im Vorrat ist.
+Steps:
+1. shopping_list for all open and bought items.
+2. inventory_list to check what is already in stock.
 
-Ausgabe (deutsch):
-- Checkliste nach Kategorie oder Laden, offene Artikel zuerst
-- pro Artikel: Menge, wer es eingetragen hat, und "bereits im Vorrat" falls zutreffend
-- am Ende: gekaufte Artikel, die mit shopping_set_bought als erledigt markiert werden sollten
+Answer in the language of the conversation:
+- a checklist by category or shop, open items first
+- per item: quantity, who added it, and "already in stock" where that applies
+- at the end: bought items that should be marked done with shopping_set_bought
 
-Nichts ändern: nur planen, keine Shopping-Tools aufrufen.`,
+Change nothing: only plan, do not call any shopping tools.`,
   ),
   prompt(
     'payment_reminder',
-    'Zahlungserinnerung entwerfen',
-    'Formuliert eine freundliche Erinnerung an offene Salden — nur Entwurf, kein Versand.',
-    z.strictObject({ ton: z.string().max(200).optional() }),
-    (args) => `Formuliere eine freundliche Zahlungserinnerung für die WG.
+    'Draft a payment reminder',
+    'Writes a friendly reminder about open balances. Draft only, nothing is sent.',
+    z.strictObject({ tone: z.string().max(200).optional() }),
+    (args) => `Write a friendly payment reminder for the flat.
 
-Vorgehen:
-1. balances_get für offene Salden.
-2. reminders_list, um bereits gesendete Erinnerungen zu vermeiden.
+Steps:
+1. balances_get for open balances.
+2. reminders_list to avoid repeating reminders already sent.
 
-Ausgabe (deutsch):
-- Anrede und Betreff
-- Betrag in Euro, wofür (Ausgabe/Referenz) und fällig seit wann
-- eine sachliche, freundliche Formulierung ohne Vorwurf
-${args.ton ? `\nGewünschter Ton: ${args.ton}` : ''}
-WICHTIG: Nur den Entwurf zurückgeben. reminder_send nicht aufrufen, bevor der Nutzer ausdrücklich zustimmt.`,
+Answer in the language of the conversation:
+- greeting and subject
+- amount, what it was for (expense or reference) and how long it has been open
+- factual, friendly wording without blame
+${args.tone ? `\nRequested tone: ${args.tone}` : ''}
+IMPORTANT: return only the draft. Do not call reminder_send before the user explicitly agrees.`,
   ),
   prompt(
     'settlement_plan',
-    'Ausgleich vorschlagen',
-    'Ermittelt die minimalen Überweisungen zwischen den Mitgliedern, ohne sie auszuführen.',
+    'Suggest a settlement',
+    'Works out the fewest transfers between the members, without carrying them out.',
     noArgs,
-    () => `Schlage den minimalen Geldausgleich zwischen den Mitgliedern vor.
+    () => `Suggest the smallest set of payments that settles the flat.
 
-Vorgehen:
-1. dashboard_get (balances) für die Salden der ganzen WG; balances_get zeigt nur, was dem Aufrufenden geschuldet wird.
-2. settlement_preview je Richtung (fromMemberId → toMemberId) für den vom Server berechneten Ausgleich.
+Steps:
+1. dashboard_get (balances) for the balances of the whole flat; balances_get only shows what others owe the caller.
+2. settlement_preview per direction (fromMemberId → toMemberId) for the settlement the server computes.
 
-Ausgabe (deutsch):
-- Tabelle: von → Betrag → an
-- Anzahl der Überweisungen und ob sie die Mindestsumme unterschreiten
-- Abweichungen zwischen dashboard_get und settlement_preview erklären
+Answer in the language of the conversation:
+- a table: from → amount → to
+- the number of transfers and whether any falls below the minimum amount
+- explain any difference between dashboard_get and settlement_preview
 
-WICHTIG: settlement_commit nicht aufrufen. Der Plan wird nur vorgeschlagen, die Ausführung braucht eine ausdrückliche Freigabe.`,
+IMPORTANT: do not call settlement_commit. The plan is only a suggestion; carrying it out needs explicit approval.`,
   ),
 ];
