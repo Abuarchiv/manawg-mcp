@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { SessionController } from './auth.js';
 import type { AppConfig } from './config.js';
-import { DETAIL_SAFE_CODE, ManaWgError, isSafeCode } from './errors.js';
+import { DETAIL_SAFE_CODE, isSafeCode, ManaWgError } from './errors.js';
 
 export type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
 

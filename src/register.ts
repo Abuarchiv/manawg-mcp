@@ -2,7 +2,7 @@ import { type McpServer, ResourceTemplate } from '@modelcontextprotocol/server';
 import { describeError } from './errors.js';
 import { isUuid } from './ids.js';
 import type { ManaWgClient, WgRequest } from './manawg-client.js';
-import { DEFAULT_MAX_BYTES, type PayloadLimits, capPayload, isRecord } from './payload.js';
+import { capPayload, DEFAULT_MAX_BYTES, isRecord, type PayloadLimits } from './payload.js';
 import type { PromptDef } from './prompts.js';
 import type { ResourceDef, ResourceTemplateDef } from './resources.js';
 import type { ToolDef } from './tools/types.js';

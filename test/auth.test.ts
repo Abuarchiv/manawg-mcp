@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync 
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
-import { MAX_CHUNK_SIZE, createSessionController, sessionCookiePairs } from '../src/auth.js';
+import { createSessionController, MAX_CHUNK_SIZE, sessionCookiePairs } from '../src/auth.js';
 import type { SupabaseAuthConfig } from '../src/config.js';
 
 const SUPABASE_URL = 'https://project.supabase.co';

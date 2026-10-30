@@ -1,4 +1,4 @@
-import { type IncomingMessage, type ServerResponse, createServer } from 'node:http';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, expect, it, vi } from 'vitest';
 import type { SessionController } from '../src/auth.js';
@@ -206,7 +206,7 @@ it('retries a rate-limited write with the same key and surfaces the safe code', 
   expect(fetchMock).toHaveBeenCalledTimes(3);
   expect((thrown as ManaWgError).code).toBe('too_many_requests');
   const keys = fetchMock.mock.calls.map((call) =>
-    (call[1]?.headers as Headers).get('idempotency-key'),
+    new Headers(call[1]?.headers).get('idempotency-key'),
   );
   expect(new Set(keys).size).toBe(1);
 });
