@@ -8,7 +8,7 @@ import {
   registerTool,
 } from './register.js';
 import { RESOURCE_DEFS, RESOURCE_TEMPLATE_DEFS } from './resources.js';
-import { TOOL_DEFS, selectTools } from './tools/registry.js';
+import { selectTools, TOOL_DEFS } from './tools/registry.js';
 import { serverVersion } from './version.js';
 
 export type ServerOptions = {

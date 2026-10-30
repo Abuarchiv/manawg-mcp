@@ -1,8 +1,7 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { type HttpServerOptions, type RunningHttpServer, startHttpServer } from '../src/http.js';
+import type { ManaWgClient } from '../src/manawg-client.js';
 import { buildServer } from '../src/server.js';
-
-type FakeClient = { call: ReturnType<typeof vi.fn> };
 
 const cleanup: Array<() => Promise<void>> = [];
 
@@ -12,7 +11,7 @@ afterEach(async () => {
   }
 });
 
-function fakeClient(payload: unknown = { items: [] }): FakeClient {
+function fakeClient(payload: unknown = { items: [] }): ManaWgClient {
   return { call: vi.fn().mockResolvedValue(payload) };
 }
 

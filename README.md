@@ -31,23 +31,23 @@ Unit tests, lint and typecheck never need credentials.
 
 ## Environment
 
-| Variable | Required | Purpose |
-| --- | --- | --- |
-| `MANAWG_BASE_URL` | yes | Origin of the ManaWG app, e.g. `https://manawg.example` |
-| `MANAWG_WG_CODE` | yes | 8-character share code of the household |
-| `MANAWG_SUPABASE_URL` | yes | Supabase project URL behind the app |
-| `MANAWG_SUPABASE_PUBLISHABLE_KEY` | yes | Supabase publishable/anon key |
-| `MANAWG_SUPABASE_REFRESH_TOKEN` | one of | Long-lived refresh token for sign-in |
-| `MANAWG_EMAIL` + `MANAWG_PASSWORD` | one of | Password sign-in instead of a refresh token |
-| `MANAWG_ALLOW_DESTRUCTIVE` | no | `1`/`true` registers destructive tools (default off) |
-| `MANAWG_SESSION_CACHE` | no | Session cache path (default `~/.config/manawg-mcp/session.json`) |
-| `MANAWG_TRANSPORT` | no | `stdio` (default) or `http` |
-| `MANAWG_HTTP_HOST` | no | Bind address for `http` (default `127.0.0.1`, `0.0.0.0` in the container) |
-| `MANAWG_HTTP_PORT` | no | Port for `http` (default `8080`) |
-| `MANAWG_HTTP_PATH` | no | MCP endpoint path for `http` (default `/mcp`) |
-| `MANAWG_HTTP_API_KEY` | no | Bearer token guarding the MCP endpoint, minimum 16 characters |
-| `MANAWG_HTTP_CORS` | no | `1` allows any browser origin to call the endpoint (default off) |
-| `MANAWG_DRAIN_MS` | no | Milliseconds `/ready` reports `503` before shutdown (default 5000) |
+| Variable                           | Required | Purpose                                                                   |
+| ---------------------------------- | -------- | ------------------------------------------------------------------------- |
+| `MANAWG_BASE_URL`                  | yes      | Origin of the ManaWG app, e.g. `https://manawg.example`                   |
+| `MANAWG_WG_CODE`                   | yes      | 8-character share code of the household                                   |
+| `MANAWG_SUPABASE_URL`              | yes      | Supabase project URL behind the app                                       |
+| `MANAWG_SUPABASE_PUBLISHABLE_KEY`  | yes      | Supabase publishable/anon key                                             |
+| `MANAWG_SUPABASE_REFRESH_TOKEN`    | one of   | Long-lived refresh token for sign-in                                      |
+| `MANAWG_EMAIL` + `MANAWG_PASSWORD` | one of   | Password sign-in instead of a refresh token                               |
+| `MANAWG_ALLOW_DESTRUCTIVE`         | no       | `1`/`true` registers destructive tools (default off)                      |
+| `MANAWG_SESSION_CACHE`             | no       | Session cache path (default `~/.config/manawg-mcp/session.json`)          |
+| `MANAWG_TRANSPORT`                 | no       | `stdio` (default) or `http`                                               |
+| `MANAWG_HTTP_HOST`                 | no       | Bind address for `http` (default `127.0.0.1`, `0.0.0.0` in the container) |
+| `MANAWG_HTTP_PORT`                 | no       | Port for `http` (default `8080`)                                          |
+| `MANAWG_HTTP_PATH`                 | no       | MCP endpoint path for `http` (default `/mcp`)                             |
+| `MANAWG_HTTP_API_KEY`              | no       | Bearer token guarding the MCP endpoint, minimum 16 characters             |
+| `MANAWG_HTTP_CORS`                 | no       | `1` allows any browser origin to call the endpoint (default off)          |
+| `MANAWG_DRAIN_MS`                  | no       | Milliseconds `/ready` reports `503` before shutdown (default 5000)        |
 
 Only `MANAWG_WG_CODE` and one sign-in mode have to be filled in by hand. `MANAWG_MEMBER_ID`,
 `MANAWG_MEMBER_TOKEN` and `MANAWG_IDENTITY_CACHE` from older versions are ignored: the app derives
@@ -140,32 +140,32 @@ app has no single-entity `GET` for it.
 
 ## Prompts (4)
 
-| Prompt | Arguments | Purpose |
-| --- | --- | --- |
-| `daily_brief` | `focus` | Dashboard, activity, shopping, chores and calendar in up to 10 bullets |
-| `shopping_run` | – | Shopping list merged with the pantry, grouped into one tour list |
-| `payment_reminder` | `tone` | Draft only: friendly reminder for open balances, never sends |
-| `settlement_plan` | – | Minimal transfers from `balances_get` + `settlement_preview`, never commits |
+| Prompt             | Arguments | Purpose                                                                     |
+| ------------------ | --------- | --------------------------------------------------------------------------- |
+| `daily_brief`      | `focus`   | Dashboard, activity, shopping, chores and calendar in up to 10 bullets      |
+| `shopping_run`     | –         | Shopping list merged with the pantry, grouped into one tour list            |
+| `payment_reminder` | `tone`    | Draft only: friendly reminder for open balances, never sends                |
+| `settlement_plan`  | –         | Minimal transfers from `balances_get` + `settlement_preview`, never commits |
 
 Prompts return instructions plus tool names; the destructive steps stay gated behind an explicit
 confirmation.
 
 ## Tools (74)
 
-| Domain | Tools |
-| --- | --- |
-| Overview | `wg_list`, `wg_overview`, `dashboard_get`, `activity_get`, `export_get` |
-| Finance | `expenses_list`, `expense_create`, `expense_update`, `expense_delete`†, `expense_split_settle`, `settlement_preview`, `settlement_commit`, `cash_payment_record`, `cash_payment_void`†, `balances_get`, `reminders_list`, `reminder_send`† |
-| Recurring | `recurring_list`, `recurring_get`, `recurring_advance`, `recurring_create`, `recurring_update`, `recurring_delete`† |
-| Shopping | `shopping_list`, `shopping_add`, `shopping_set_bought`, `shopping_remove`†, `shopping_clear_bought`† |
-| Inventory | `inventory_list`, `inventory_add`, `inventory_update`, `inventory_consume`, `inventory_remove`† |
-| Chores | `chores_list`, `chore_get`, `chore_create`, `chore_update`, `chore_complete`, `chore_delete`† |
-| Notes | `notes_list`, `note_create`, `note_update`, `note_delete`†, `note_comments`, `note_comment`, `note_comment_update`, `note_comment_delete`†, `note_react` |
-| Chat | `chat_messages`, `chat_send`, `chat_edit`, `chat_react`, `chat_unreact`, `chat_mark_read`, `chat_unread`, `chat_delete`† |
-| Calendar | `events_list`, `event_get`, `event_create`, `event_update`, `event_delete`†, `absences_list`, `absence_create`, `absence_delete`† |
-| Members | `members_list`, `member_get`, `member_update`†, `notifications_get`, `notifications_update`, `wg_update`† |
-| Imports | `import_preview`, `import_commit`† |
-| Account | `calendar_subscription_get`, `wg_create`† |
+| Domain    | Tools                                                                                                                                                                                                                                      |
+| --------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Overview  | `wg_list`, `wg_overview`, `dashboard_get`, `activity_get`, `export_get`                                                                                                                                                                    |
+| Finance   | `expenses_list`, `expense_create`, `expense_update`, `expense_delete`†, `expense_split_settle`, `settlement_preview`, `settlement_commit`, `cash_payment_record`, `cash_payment_void`†, `balances_get`, `reminders_list`, `reminder_send`† |
+| Recurring | `recurring_list`, `recurring_get`, `recurring_advance`, `recurring_create`, `recurring_update`, `recurring_delete`†                                                                                                                        |
+| Shopping  | `shopping_list`, `shopping_add`, `shopping_set_bought`, `shopping_remove`†, `shopping_clear_bought`†                                                                                                                                       |
+| Inventory | `inventory_list`, `inventory_add`, `inventory_update`, `inventory_consume`, `inventory_remove`†                                                                                                                                            |
+| Chores    | `chores_list`, `chore_get`, `chore_create`, `chore_update`, `chore_complete`, `chore_delete`†                                                                                                                                              |
+| Notes     | `notes_list`, `note_create`, `note_update`, `note_delete`†, `note_comments`, `note_comment`, `note_comment_update`, `note_comment_delete`†, `note_react`                                                                                   |
+| Chat      | `chat_messages`, `chat_send`, `chat_edit`, `chat_react`, `chat_unreact`, `chat_mark_read`, `chat_unread`, `chat_delete`†                                                                                                                   |
+| Calendar  | `events_list`, `event_get`, `event_create`, `event_update`, `event_delete`†, `absences_list`, `absence_create`, `absence_delete`†                                                                                                          |
+| Members   | `members_list`, `member_get`, `member_update`†, `notifications_get`, `notifications_update`, `wg_update`†                                                                                                                                  |
+| Imports   | `import_preview`, `import_commit`†                                                                                                                                                                                                         |
+| Account   | `calendar_subscription_get`, `wg_create`†                                                                                                                                                                                                  |
 
 † destructive: only registered when `MANAWG_ALLOW_DESTRUCTIVE=1` (17 tools), and annotated with
 `destructiveHint`. GET tools and the side-effect-free `import_preview` POST are annotated

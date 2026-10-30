@@ -7,7 +7,7 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createSessionController } from '../dist/auth.js';
 import { loadConfig } from '../dist/config.js';
-import { ManaWgError, createManaWgClient } from '../dist/manawg-client.js';
+import { createManaWgClient, ManaWgError } from '../dist/manawg-client.js';
 
 function loadEnvFile(path) {
   try {
