@@ -34,3 +34,22 @@ it('falls back to an oversized envelope when nothing can be shortened', () => {
   expect(payload.a).toBeUndefined();
   expect(payload._mcp).toMatchObject({ truncated: true, oversized: true });
 });
+
+it('terminates when every array is down to one item and the payload is still too big', () => {
+  const memberMapping = Object.fromEntries(
+    Array.from({ length: 4000 }, (_, i) => [`Person Number ${i} Surname`, null]),
+  );
+  const result = capPayload(
+    { parsed: [{ a: 1 }, { a: 2 }], memberMapping, payloadHash: 'h' },
+    { maxBytes: 100_000 },
+  );
+  expect(result.truncated).toBe(true);
+  expect(JSON.stringify(result.payload).length).toBeLessThanOrEqual(100_000);
+  expect(result.payload).toMatchObject({ _mcp: { truncated: true, oversized: true } });
+});
+
+it('shortens a long string even while a one-item array sits next to it', () => {
+  const result = capPayload({ rows: [{ a: 1 }], content: 'x'.repeat(5000) }, { maxBytes: 1000 });
+  expect(JSON.stringify(result.payload).length).toBeLessThanOrEqual(1000);
+  expect(result.payload).toMatchObject({ _mcp: { truncated: true, fields: ['content'] } });
+});

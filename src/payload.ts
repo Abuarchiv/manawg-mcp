@@ -14,9 +14,10 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
+/** Only arrays that can still lose an item count: a one-item array cannot shrink further. */
 function largestArrayField(record: Record<string, unknown>): string | undefined {
   let name: string | undefined;
-  let size = 0;
+  let size = 1;
   for (const [key, value] of Object.entries(record)) {
     if (Array.isArray(value) && value.length > size) {
       name = key;
