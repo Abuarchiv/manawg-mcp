@@ -27,6 +27,7 @@ function cachePath(): string {
 
 function authConfig(overrides: Partial<SupabaseAuthConfig> = {}): SupabaseAuthConfig {
   return {
+    mode: 'session',
     url: SUPABASE_URL,
     publishableKey: PUBLISHABLE_KEY,
     email: 'member@example.test',

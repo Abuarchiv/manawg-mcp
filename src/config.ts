@@ -6,7 +6,13 @@ const DEFAULT_TIMEOUT_MS = 10_000;
 const TRUTHY_VALUES = new Set(['1', 'true', 'yes', 'on']);
 
 export const DEFAULT_SESSION_CACHE_PATH = join(homedir(), '.config', 'manawg-mcp', 'session.json');
+
+/** Crockford base32 share code, exactly as the app generates it. */
+export const SHARE_CODE_PATTERN = /^[0-9A-HJKMNP-TV-Z]{8}$/;
+
+/** One account signed in by the server itself (stdio, or a private HTTP deployment). */
 export type SupabaseAuthConfig = {
+  mode: 'session';
   url: string;
   publishableKey: string;
   email?: string;
@@ -14,6 +20,24 @@ export type SupabaseAuthConfig = {
   bootstrapRefreshToken?: string;
   sessionCachePath: string;
 };
+
+/**
+ * Hosted mode: the server is an OAuth 2.1 resource server. Every MCP request carries the
+ * user's Supabase access token, which is verified here and forwarded to the app.
+ */
+export type OAuthConfig = {
+  mode: 'oauth';
+  supabaseUrl: string;
+  /** Supabase Auth issuer, `<supabase>/auth/v1`. */
+  issuer: string;
+  jwksUrl: string;
+  /** RFC 8414 metadata of the issuer, `<supabase>/.well-known/oauth-authorization-server/auth/v1`. */
+  metadataUrl: string;
+  /** Public URL of the MCP endpoint, the resource identifier clients obtain tokens for. */
+  resourceUrl: URL;
+};
+
+export type AuthConfig = SupabaseAuthConfig | OAuthConfig;
 
 type TransportName = 'stdio' | 'http';
 
@@ -29,9 +53,10 @@ type HttpTransportConfig = {
 export type AppConfig = {
   baseUrl: string;
   origin: string;
-  wgCode: string;
+  /** Flat used when a tool call names none; without it the account's only flat is used. */
+  defaultWgCode?: string;
   timeoutMs: number;
-  auth: SupabaseAuthConfig;
+  auth: AuthConfig;
   allowDestructive: boolean;
   transport: TransportName;
   http: HttpTransportConfig;
@@ -63,13 +88,18 @@ function absoluteHttpUrl(env: NodeJS.ProcessEnv, name: string): string {
   return parsed.href.replace(/\/+$/, '');
 }
 
-function loadAuthConfig(env: NodeJS.ProcessEnv): SupabaseAuthConfig {
-  const url = absoluteHttpUrl(env, 'MANAWG_SUPABASE_URL');
+function loadSessionAuth(env: NodeJS.ProcessEnv, url: string): SupabaseAuthConfig {
   const publishableKey = required(env, 'MANAWG_SUPABASE_PUBLISHABLE_KEY', 'Invalid configuration');
 
   const bootstrapRefreshToken = env.MANAWG_SUPABASE_REFRESH_TOKEN?.trim();
   if (bootstrapRefreshToken) {
-    return { url, publishableKey, bootstrapRefreshToken, sessionCachePath: sessionCachePath(env) };
+    return {
+      mode: 'session',
+      url,
+      publishableKey,
+      bootstrapRefreshToken,
+      sessionCachePath: sessionCachePath(env),
+    };
   }
 
   const email = env.MANAWG_EMAIL?.trim();
@@ -79,7 +109,65 @@ function loadAuthConfig(env: NodeJS.ProcessEnv): SupabaseAuthConfig {
       'ManaWG MCP needs either MANAWG_SUPABASE_REFRESH_TOKEN or both MANAWG_EMAIL and MANAWG_PASSWORD',
     );
   }
-  return { url, publishableKey, email, password, sessionCachePath: sessionCachePath(env) };
+  return {
+    mode: 'session',
+    url,
+    publishableKey,
+    email,
+    password,
+    sessionCachePath: sessionCachePath(env),
+  };
+}
+
+function loadOAuth(env: NodeJS.ProcessEnv, supabaseUrl: string, mcpPath: string): OAuthConfig {
+  const resourceUrl = new URL(absoluteHttpUrl(env, 'MANAWG_PUBLIC_URL'));
+  if (resourceUrl.pathname.replace(/\/+$/, '') !== mcpPath) {
+    // Clients discover the endpoint from this URL; any other path ends in a 404.
+    throw new Error(`MANAWG_PUBLIC_URL must end in the MCP path ${mcpPath} (MANAWG_HTTP_PATH)`);
+  }
+  if (env.MANAWG_WG_CODE?.trim()) {
+    throw new Error(
+      'MANAWG_WG_CODE has no meaning with MANAWG_AUTH=oauth: every user has own flats',
+    );
+  }
+  if (resourceUrl.protocol !== 'https:' && !isLoopbackHost(resourceUrl.hostname)) {
+    throw new Error('MANAWG_PUBLIC_URL must use https');
+  }
+  if (resourceUrl.search || resourceUrl.hash) {
+    throw new Error('MANAWG_PUBLIC_URL must not carry a query or fragment');
+  }
+  const issuer = `${supabaseUrl}/auth/v1`;
+  const supabase = new URL(supabaseUrl);
+  return {
+    mode: 'oauth',
+    supabaseUrl,
+    issuer,
+    jwksUrl: `${issuer}/.well-known/jwks.json`,
+    metadataUrl: `${supabase.origin}/.well-known/oauth-authorization-server${supabase.pathname.replace(/\/+$/, '')}/auth/v1`,
+    resourceUrl,
+  };
+}
+
+function authMode(env: NodeJS.ProcessEnv): AuthConfig['mode'] {
+  const value = env.MANAWG_AUTH?.trim().toLowerCase();
+  if (!value || value === 'session') {
+    return 'session';
+  }
+  if (value === 'oauth') {
+    return 'oauth';
+  }
+  throw new Error('MANAWG_AUTH must be session or oauth');
+}
+
+function defaultWgCode(env: NodeJS.ProcessEnv): string | undefined {
+  const value = env.MANAWG_WG_CODE?.trim().toUpperCase();
+  if (!value) {
+    return undefined;
+  }
+  if (!SHARE_CODE_PATTERN.test(value)) {
+    throw new Error('MANAWG_WG_CODE must be the 8-character share code of the flat');
+  }
+  return value;
 }
 
 function sessionCachePath(env: NodeJS.ProcessEnv): string {
@@ -92,6 +180,16 @@ function allowDestructive(env: NodeJS.ProcessEnv): boolean {
   return value !== undefined && TRUTHY_VALUES.has(value);
 }
 
+function isLoopbackHost(host: string): boolean {
+  const bare = host.replace(/^\[|\]$/g, '');
+  const version = isIP(bare);
+  return (
+    bare.toLowerCase() === 'localhost' ||
+    (version === 4 && bare.split('.')[0] === '127') ||
+    (version === 6 && bare === '::1')
+  );
+}
+
 const DEFAULT_HTTP: HttpTransportConfig = {
   host: '127.0.0.1',
   port: 8080,
@@ -99,15 +197,6 @@ const DEFAULT_HTTP: HttpTransportConfig = {
   cors: false,
   drainMs: 5_000,
 };
-
-function isLoopbackHost(host: string): boolean {
-  const version = isIP(host);
-  return (
-    host.toLowerCase() === 'localhost' ||
-    (version === 4 && host.split('.')[0] === '127') ||
-    (version === 6 && host === '::1')
-  );
-}
 
 function transport(env: NodeJS.ProcessEnv): TransportName {
   const value = env.MANAWG_TRANSPORT?.trim().toLowerCase();
@@ -172,20 +261,35 @@ function httpTransport(env: NodeJS.ProcessEnv): HttpTransportConfig {
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const baseUrl = absoluteHttpUrl(env, 'MANAWG_BASE_URL');
   const origin = new URL(baseUrl).origin;
-
-  const wgCode = required(env, 'MANAWG_WG_CODE');
+  const supabaseUrl = absoluteHttpUrl(env, 'MANAWG_SUPABASE_URL');
   const transportName = transport(env);
   const http = httpTransport(env);
-  if (transportName === 'http' && !http.apiKey && !isLoopbackHost(http.host)) {
-    throw new Error('MANAWG_HTTP_API_KEY is required when MANAWG_HTTP_HOST is not loopback');
+  const mode = authMode(env);
+
+  let auth: AuthConfig;
+  if (mode === 'oauth') {
+    if (transportName !== 'http') {
+      throw new Error('MANAWG_AUTH=oauth needs MANAWG_TRANSPORT=http');
+    }
+    if (http.apiKey) {
+      throw new Error('MANAWG_HTTP_API_KEY and MANAWG_AUTH=oauth exclude each other');
+    }
+    auth = loadOAuth(env, supabaseUrl, http.path);
+  } else {
+    // One shared account behind an open port would hand it to anyone who can reach the port.
+    if (transportName === 'http' && !http.apiKey && !isLoopbackHost(http.host)) {
+      throw new Error('MANAWG_HTTP_API_KEY is required when MANAWG_HTTP_HOST is not loopback');
+    }
+    auth = loadSessionAuth(env, supabaseUrl);
   }
 
+  const wgCode = defaultWgCode(env);
   return {
     baseUrl,
     origin,
-    wgCode,
+    ...(wgCode ? { defaultWgCode: wgCode } : {}),
     timeoutMs: DEFAULT_TIMEOUT_MS,
-    auth: loadAuthConfig(env),
+    auth,
     allowDestructive: allowDestructive(env),
     transport: transportName,
     http,

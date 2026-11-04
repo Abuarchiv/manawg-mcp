@@ -1,10 +1,8 @@
 import { pathToFileURL } from 'node:url';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
-import { createSessionController } from './auth.js';
+import { httpHandlerOptions, serverFactory } from './app.js';
 import { type AppConfig, loadConfig } from './config.js';
 import { startHttpServer } from './http.js';
-import { createManaWgClient } from './manawg-client.js';
-import { buildServer } from './server.js';
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'unknown error';
@@ -19,18 +17,18 @@ function readConfig(): AppConfig {
   }
 }
 
-async function runHttp(
-  config: AppConfig,
-  createServer: Parameters<typeof startHttpServer>[0]['createServer'],
-) {
+async function runHttp(config: AppConfig) {
   const running = await startHttpServer({
-    ...config.http,
-    createServer,
-    onServerError: (error) => console.error(`mcp_http_error: ${errorMessage(error)}`),
+    host: config.http.host,
+    port: config.http.port,
+    drainMs: config.http.drainMs,
+    ...httpHandlerOptions(config, (error) =>
+      console.error(`mcp_http_error: ${errorMessage(error)}`),
+    ),
   });
   const base = running.url.slice(0, running.url.length - config.http.path.length);
   console.error(
-    `ManaWG MCP server ready transport=http mcp=${running.url} health=${base}/health ready=${base}/ready`,
+    `ManaWG MCP server ready transport=http auth=${config.auth.mode} mcp=${running.url} health=${base}/health ready=${base}/ready`,
   );
 
   const shutdown = (signal: string) => {
@@ -50,14 +48,10 @@ async function runHttp(
 
 export function start() {
   const config = readConfig();
-  const auth = createSessionController(config.auth);
-  const client = createManaWgClient(config, fetch, auth);
-  const createServer = () => buildServer(client, { allowDestructive: config.allowDestructive });
-
   if (config.transport === 'http') {
-    return runHttp(config, createServer);
+    return runHttp(config);
   }
-  const handle = serveStdio(createServer);
+  const handle = serveStdio(serverFactory(config));
   console.error('ManaWG MCP server ready transport=stdio');
   return handle;
 }

@@ -38,7 +38,7 @@ jobs:
         with:
           context: .
           push: false
-          # buildx exportiert sonst nicht in den lokalen Daemon; der Smoke-Schritt fand das Image nie (seit 2026-09-24 rot).
+          # Without load, buildx keeps the image out of the local daemon and the smoke step cannot run it.
           load: true
           tags: manawg-mcp:ci
           cache-from: type=gha
@@ -47,17 +47,19 @@ jobs:
         run: |
           docker run -d --name manawg-ci -p 18080:8080 \
             -e MANAWG_BASE_URL=https://example.invalid \
-            -e MANAWG_WG_CODE=SMOKE0000 \
             -e MANAWG_SUPABASE_URL=https://smoke.supabase.co \
             -e MANAWG_SUPABASE_PUBLISHABLE_KEY=sb_publishable_smoke \
             -e MANAWG_SUPABASE_REFRESH_TOKEN=refresh_token_smoke \
+            -e MANAWG_HTTP_API_KEY=ci-smoke-key-0123456789 \
             manawg-mcp:ci
           for attempt in $(seq 1 30); do
             curl -fsS http://127.0.0.1:18080/health && break
             sleep 1
           done
           curl -fsS http://127.0.0.1:18080/health | grep -q '"status":"ok"'
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:18080/mcp)" = 401
           curl -fsS -X POST http://127.0.0.1:18080/mcp \
+            -H 'authorization: Bearer ci-smoke-key-0123456789' \
             -H 'content-type: application/json' \
             -H 'accept: application/json, text/event-stream' \
             -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}' \

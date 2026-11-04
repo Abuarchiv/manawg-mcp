@@ -2,6 +2,23 @@
 
 ## 0.2.0 (unreleased)
 
+### Added (hosted mode)
+
+- `MANAWG_AUTH=oauth`: the HTTP transport acts as an OAuth 2.1 resource server for many users.
+  It serves RFC 9728 protected resource metadata, answers `401` with a `resource_metadata`
+  challenge, verifies Supabase access tokens against the project's JWKS (issuer, audience, expiry,
+  `client_id`) and forwards them to the app as `Authorization: Bearer`. No account is stored.
+- Optional `wgCode` on every flat tool. `MANAWG_WG_CODE` is now optional: without it the account's
+  only flat is used, several flats answer `wg_code_required`.
+- Server instructions on `initialize`, so agents know the order of calls and the guard rails.
+- Vercel deployment (`api/mcp.js`, `vercel.json`); `src/http.ts` is now a web-standard handler
+  that the Node listener, the Docker image and the Vercel Function share.
+
+### Changed
+
+- `wg_create` is no longer gated behind `MANAWG_ALLOW_DESTRUCTIVE`: it only creates.
+- `MANAWG_WG_CODE` must be a share code the app issues (8 characters, Crockford base32).
+
 ### Removed
 
 - `paypal_order_create` and `paypal_capture`: the app no longer has PayPal. Their error codes and

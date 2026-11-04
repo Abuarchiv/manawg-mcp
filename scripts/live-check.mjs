@@ -7,7 +7,8 @@ import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createSessionController } from '../dist/auth.js';
 import { loadConfig } from '../dist/config.js';
-import { createManaWgClient, ManaWgError } from '../dist/manawg-client.js';
+import { ManaWgError } from '../dist/errors.js';
+import { createManaWgClient, sessionCredentials } from '../dist/manawg-client.js';
 
 function loadEnvFile(path) {
   try {
@@ -56,14 +57,21 @@ try {
   process.exit(1);
 }
 
+if (config.auth.mode !== 'session') {
+  console.error('config_error: live-check signs in itself; run it with MANAWG_AUTH=session');
+  process.exit(1);
+}
+
 console.error(`env_file: ${loaded ? 'loaded' : 'missing'} path=${envPath}`);
 console.error(`base_url: ${new URL(config.baseUrl).host}`);
-console.error(`wg_code: ${mask(config.wgCode)}`);
+console.error(
+  `wg_code: ${config.defaultWgCode ? mask(config.defaultWgCode) : 'only flat of the account'}`,
+);
 console.error(`auth_mode: ${config.auth.bootstrapRefreshToken ? 'refresh_token' : 'password'}`);
 console.error(`destructive_tools: ${config.allowDestructive ? 'enabled' : 'disabled'}`);
 
 const auth = createSessionController(config.auth);
-const client = createManaWgClient(config, fetch, auth);
+const client = createManaWgClient(config, fetch, sessionCredentials(auth));
 
 async function reach(url, headers = {}) {
   const response = await fetch(url, {

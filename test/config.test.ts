@@ -4,7 +4,7 @@ import { loadConfig } from '../src/config.js';
 function validEnv(): NodeJS.ProcessEnv {
   return {
     MANAWG_BASE_URL: 'https://example.test/',
-    MANAWG_WG_CODE: 'WG123',
+    MANAWG_WG_CODE: 'k7q2m9xd',
     MANAWG_SUPABASE_URL: 'https://project.supabase.co/',
     MANAWG_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_key_abc',
     MANAWG_EMAIL: 'member@example.test',
@@ -26,10 +26,10 @@ function thrownMessage(action: () => unknown): string {
 
 it('rejects missing required credentials without echoing their values', () => {
   const env = validEnv();
-  env.MANAWG_WG_CODE = undefined;
+  env.MANAWG_SUPABASE_URL = undefined;
   const message = thrownMessage(() => loadConfig(env));
 
-  expect(message).toContain('MANAWG_WG_CODE');
+  expect(message).toContain('MANAWG_SUPABASE_URL');
   for (const value of [env.MANAWG_BASE_URL, env.MANAWG_PASSWORD]) {
     if (typeof value === 'string') {
       expect(message).not.toContain(value);
@@ -57,9 +57,57 @@ it('prefers the refresh token over password sign-in when both are set', () => {
     MANAWG_SUPABASE_REFRESH_TOKEN: 'refresh-token-value',
   });
 
-  expect(config.auth.bootstrapRefreshToken).toBe('refresh-token-value');
-  expect(config.auth.email).toBeUndefined();
-  expect(config.auth.password).toBeUndefined();
+  expect(config.auth).toMatchObject({
+    mode: 'session',
+    bootstrapRefreshToken: 'refresh-token-value',
+  });
+  expect(config.auth).not.toHaveProperty('email');
+  expect(config.auth).not.toHaveProperty('password');
+});
+
+it('takes the default flat in any case and refuses a code the app never issues', () => {
+  expect(loadConfig(validEnv()).defaultWgCode).toBe('K7Q2M9XD');
+  expect(loadConfig({ ...validEnv(), MANAWG_WG_CODE: '' }).defaultWgCode).toBeUndefined();
+  expect(thrownMessage(() => loadConfig({ ...validEnv(), MANAWG_WG_CODE: 'WG123' }))).toContain(
+    'MANAWG_WG_CODE',
+  );
+});
+
+function oauthEnv(): NodeJS.ProcessEnv {
+  return {
+    MANAWG_BASE_URL: 'https://app.example.test',
+    MANAWG_SUPABASE_URL: 'https://project.supabase.co',
+    MANAWG_AUTH: 'oauth',
+    MANAWG_TRANSPORT: 'http',
+    MANAWG_HTTP_HOST: '0.0.0.0',
+    MANAWG_PUBLIC_URL: 'https://mcp.example.test/mcp',
+  };
+}
+
+it('derives the Supabase issuer, key set and metadata for the hosted OAuth mode', () => {
+  const config = loadConfig(oauthEnv());
+
+  expect(config.auth).toEqual({
+    mode: 'oauth',
+    supabaseUrl: 'https://project.supabase.co',
+    issuer: 'https://project.supabase.co/auth/v1',
+    jwksUrl: 'https://project.supabase.co/auth/v1/.well-known/jwks.json',
+    metadataUrl: 'https://project.supabase.co/.well-known/oauth-authorization-server/auth/v1',
+    resourceUrl: new URL('https://mcp.example.test/mcp'),
+  });
+  expect(config.defaultWgCode).toBeUndefined();
+});
+
+it.each([
+  [{ MANAWG_TRANSPORT: 'stdio' }, 'MANAWG_TRANSPORT=http'],
+  [{ MANAWG_PUBLIC_URL: undefined }, 'MANAWG_PUBLIC_URL'],
+  [{ MANAWG_PUBLIC_URL: 'http://mcp.example.test/mcp' }, 'https'],
+  [{ MANAWG_HTTP_API_KEY: 'k'.repeat(32) }, 'exclude each other'],
+  [{ MANAWG_AUTH: 'magic' }, 'MANAWG_AUTH'],
+  [{ MANAWG_PUBLIC_URL: 'https://mcp.example.test' }, 'MCP path /mcp'],
+  [{ MANAWG_WG_CODE: 'K7Q2M9XD' }, 'every user has own flats'],
+])('refuses an incomplete OAuth setup: %o', (overrides, expected) => {
+  expect(thrownMessage(() => loadConfig({ ...oauthEnv(), ...overrides }))).toContain(expected);
 });
 
 it.each([

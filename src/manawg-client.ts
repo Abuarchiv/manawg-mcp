@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { SessionController } from './auth.js';
-import type { AppConfig } from './config.js';
+import { type AppConfig, SHARE_CODE_PATTERN } from './config.js';
 import { DETAIL_SAFE_CODE, isSafeCode, ManaWgError } from './errors.js';
 
 export type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
@@ -16,11 +16,45 @@ export type WgRequest = {
   body?: unknown;
   /** `account` targets the account-level routes under `/api/wg/*` that live outside a WG code. */
   scope?: RequestScope;
+  /** Share code of the flat; falls back to the configured default, then to the only flat. */
+  wgCode?: string;
 };
 
 export type ManaWgClient = {
   call(request: WgRequest): Promise<unknown>;
 };
+
+/** How a request proves who it acts for. */
+export type Credentials = {
+  apply(headers: Headers): Promise<void>;
+  /** Takes up credential rotations the app returns (`Set-Cookie`). */
+  ingest?(response: Response): Promise<void>;
+  /** Drops cached credentials after a 401; returns true when a fresh attempt can succeed. */
+  invalidate?(): boolean;
+};
+
+/** The server's own signed-in account, sent as the `@supabase/ssr` session cookie. */
+export function sessionCredentials(session: SessionController): Credentials {
+  return {
+    apply: async (headers) => {
+      headers.set('cookie', await session.cookieHeader());
+    },
+    ingest: (response) => session.ingest(response),
+    invalidate: () => {
+      session.invalidate();
+      return true;
+    },
+  };
+}
+
+/** A user's verified OAuth access token, forwarded unchanged. */
+export function bearerCredentials(token: string): Credentials {
+  return {
+    apply: async (headers) => {
+      headers.set('authorization', `Bearer ${token}`);
+    },
+  };
+}
 
 const AUTH_RETRY_CODES = new Set(['auth_required', 'member_deactivated', 'not_a_member']);
 
@@ -147,17 +181,37 @@ async function peekJson(response: Response): Promise<unknown> {
   }
 }
 
+const ONLY_WG_TTL_MS = 60_000;
+
+/** Codes after which a cached "only flat" may be stale (left, deactivated or deleted). */
+const MEMBERSHIP_GONE_CODES = new Set(['not_a_member', 'member_deactivated', 'wg_not_found']);
+
+function onlyWgCode(payload: unknown): string {
+  const wgs = (payload as { wgs?: unknown } | undefined)?.wgs;
+  const codes = Array.isArray(wgs)
+    ? wgs
+        .map((wg) => (wg as { code?: unknown } | null)?.code)
+        .filter((code): code is string => typeof code === 'string')
+    : [];
+  if (codes.length === 1 && codes[0]) {
+    return codes[0];
+  }
+  throw new ManaWgError(codes.length === 0 ? 'no_wg_membership' : 'wg_code_required', 400);
+}
+
 export function createManaWgClient(
-  config: AppConfig,
+  config: Pick<AppConfig, 'baseUrl' | 'origin' | 'timeoutMs' | 'defaultWgCode'>,
   fetchImpl: typeof fetch = fetch,
-  auth?: SessionController,
+  credentials?: Credentials,
   retryOptions: ClientRetryOptions = {},
 ): ManaWgClient {
   const retryDelaysMs = retryOptions.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
   const maxAutoRetryDelayMs = retryOptions.maxAutoRetryDelayMs ?? DEFAULT_MAX_AUTO_RETRY_DELAY_MS;
+  /** The account's only flat; joining or creating another one must not keep it valid long. */
+  let resolvedWgCode: { code: Promise<string>; until: number } | undefined;
 
-  function buildUrl(request: WgRequest): string {
-    const base = request.scope === 'account' ? [] : [config.wgCode];
+  function buildUrl(request: WgRequest, wgCode: string | undefined): string {
+    const base = wgCode === undefined ? [] : [wgCode];
     const segments = [...base, ...request.path].map((segment) => encodeURIComponent(segment));
     const url = new URL([config.baseUrl, 'api', 'wg', ...segments].join('/'));
     for (const [name, value] of Object.entries(request.query ?? {})) {
@@ -180,15 +234,16 @@ export function createManaWgClient(
 
   async function perform(
     request: WgRequest,
+    wgCode: string | undefined,
     idempotencyKey?: string,
     retried = false,
   ): Promise<Response> {
     const method = request.method ?? 'GET';
     // The app derives the acting member from the session cookie; no member headers are needed.
     const headers = new Headers({ accept: 'application/json, text/csv', origin: config.origin });
-    if (auth) {
+    if (credentials) {
       try {
-        headers.set('cookie', await auth.cookieHeader());
+        await credentials.apply(headers);
       } catch {
         throw new ManaWgError('auth_failed', 401);
       }
@@ -212,32 +267,33 @@ export function createManaWgClient(
 
     let response: Response;
     try {
-      response = await fetchImpl(buildUrl(request), init);
+      response = await fetchImpl(buildUrl(request, wgCode), init);
     } catch {
       throw new ManaWgError('upstream_network_error', 0);
     }
-    if (auth) {
-      await auth.ingest(response);
-    }
+    await credentials?.ingest?.(response);
 
     // The session may have been revoked server-side: sign in again exactly once.
-    if (!retried && auth && response.status === 401) {
+    if (!retried && credentials?.invalidate && response.status === 401) {
       const code = safeCode(await peekJson(response), response.status);
-      if (AUTH_RETRY_CODES.has(code)) {
-        auth.invalidate();
-        return perform(request, idempotencyKey, true);
+      if (AUTH_RETRY_CODES.has(code) && credentials.invalidate()) {
+        return perform(request, wgCode, idempotencyKey, true);
       }
     }
     return response;
   }
 
   /** One request with bounded retries: transient statuses, rate limits and network failures. */
-  async function send(request: WgRequest, idempotencyKey?: string): Promise<Response> {
+  async function send(
+    request: WgRequest,
+    wgCode: string | undefined,
+    idempotencyKey?: string,
+  ): Promise<Response> {
     for (let attempt = 0; ; attempt++) {
       const fallbackMs = retryDelaysMs[attempt];
       let response: Response;
       try {
-        response = await perform(request, idempotencyKey);
+        response = await perform(request, wgCode, idempotencyKey);
       } catch (error) {
         const retryable =
           fallbackMs !== undefined &&
@@ -261,10 +317,55 @@ export function createManaWgClient(
     }
   }
 
+  /** The account's only flat, looked up at most once a minute per client. */
+  function onlyWg(): Promise<string> {
+    if (resolvedWgCode && resolvedWgCode.until > Date.now()) {
+      return resolvedWgCode.code;
+    }
+    const entry = {
+      code: send({ path: ['mine'], scope: 'account' }, undefined)
+        .then(decode)
+        .then(onlyWgCode),
+      until: Date.now() + ONLY_WG_TTL_MS,
+    };
+    resolvedWgCode = entry;
+    entry.code.catch(() => {
+      if (resolvedWgCode === entry) resolvedWgCode = undefined;
+    });
+    return entry.code;
+  }
+
+  async function wgCodeFor(request: WgRequest): Promise<string | undefined> {
+    if (request.scope === 'account') {
+      return undefined;
+    }
+    const explicit = request.wgCode?.trim().toUpperCase() || config.defaultWgCode;
+    if (explicit === undefined) {
+      return onlyWg();
+    }
+    if (!SHARE_CODE_PATTERN.test(explicit)) {
+      throw new ManaWgError('invalid_share_code', 400);
+    }
+    return explicit;
+  }
+
   return {
     async call(request: WgRequest): Promise<unknown> {
+      const wgCode = await wgCodeFor(request);
       const idempotencyKey = (request.method ?? 'GET') === 'GET' ? undefined : randomUUID();
-      return decode(await send(request, idempotencyKey));
+      try {
+        const payload = await decode(await send(request, wgCode, idempotencyKey));
+        if (request.scope === 'account' && idempotencyKey) {
+          // A new flat (wg_create) means the account may no longer have just one.
+          resolvedWgCode = undefined;
+        }
+        return payload;
+      } catch (error) {
+        if (error instanceof ManaWgError && MEMBERSHIP_GONE_CODES.has(error.code)) {
+          resolvedWgCode = undefined;
+        }
+        throw error;
+      }
     },
   };
 }

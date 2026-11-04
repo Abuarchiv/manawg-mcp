@@ -1,4 +1,6 @@
 import { type McpServer, ResourceTemplate } from '@modelcontextprotocol/server';
+import { z } from 'zod';
+import { SHARE_CODE_PATTERN } from './config.js';
 import { describeError } from './errors.js';
 import { isUuid } from './ids.js';
 import type { ManaWgClient, WgRequest } from './manawg-client.js';
@@ -84,13 +86,35 @@ export function registerPrompt(server: McpServer, def: PromptDef): void {
   );
 }
 
+const wgCodeInput = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(SHARE_CODE_PATTERN)
+  .optional()
+  .describe(
+    'Share code of the flat (code from wg_list). Leave it out when the account belongs to one flat.',
+  );
+
+/** WG-scoped tools take an optional `wgCode`, so one connection can serve several flats. */
+function inputSchema(def: ToolDef): z.ZodType {
+  if (def.scope === 'account') {
+    return def.input;
+  }
+  if (!(def.input instanceof z.ZodObject)) {
+    throw new Error(`${def.name}: tool input must be an object schema`);
+  }
+  // `safeExtend` keeps strictness and refinements (`extend` refuses refined objects).
+  return def.input.safeExtend({ wgCode: wgCodeInput });
+}
+
 export function registerTool(server: McpServer, client: ManaWgClient, def: ToolDef): void {
   server.registerTool(
     def.name,
     {
       title: def.title,
       description: def.description,
-      inputSchema: def.input,
+      inputSchema: inputSchema(def),
       annotations: {
         readOnlyHint: def.readOnly ?? def.method === 'GET',
         destructiveHint: def.gate === 'destructive',
@@ -98,8 +122,10 @@ export function registerTool(server: McpServer, client: ManaWgClient, def: ToolD
       },
     },
     // The SDK has already validated `args` against `def.input` at this point.
-    async (args) => {
+    async (input) => {
+      const { wgCode, ...args } = input as { wgCode?: string } & Record<string, unknown>;
       const request: WgRequest = {
+        ...(wgCode ? { wgCode } : {}),
         method: def.method,
         path: def.path(args),
         ...(def.scope ? { scope: def.scope } : {}),

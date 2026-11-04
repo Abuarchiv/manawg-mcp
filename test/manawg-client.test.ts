@@ -4,16 +4,17 @@ import { afterEach, expect, it, vi } from 'vitest';
 import type { SessionController } from '../src/auth.js';
 import type { AppConfig } from '../src/config.js';
 import { ManaWgError } from '../src/errors.js';
-import { createManaWgClient } from '../src/manawg-client.js';
+import { createManaWgClient, sessionCredentials } from '../src/manawg-client.js';
 
 const _UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const validConfig: AppConfig = {
   baseUrl: 'https://example.test',
   origin: 'https://example.test',
-  wgCode: 'WG123',
+  defaultWgCode: 'K7Q2M9XD',
   timeoutMs: 10_000,
   auth: {
+    mode: 'session',
     url: 'https://project.supabase.co',
     publishableKey: 'sb_publishable_key_abc',
     email: 'member@example.test',
@@ -79,21 +80,25 @@ async function errorCode(promise: Promise<unknown>): Promise<string> {
   throw new Error('Expected promise to reject');
 }
 
-it('url-encodes the WG code and path segments', async () => {
+it('url-encodes path segments and refuses a malformed WG code before any request', async () => {
   const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ ok: true }));
-  const client = createManaWgClient({ ...validConfig, wgCode: 'WG 1/2' }, fetchMock);
+  const client = createManaWgClient(validConfig, fetchMock);
 
   await client.call({ path: ['chores', 'chore/1', 'complete'], method: 'POST', body: {} });
-
   expect(fetchMock.mock.calls[0]?.[0]).toBe(
-    'https://example.test/api/wg/WG%201%2F2/chores/chore%2F1/complete',
+    'https://example.test/api/wg/K7Q2M9XD/chores/chore%2F1/complete',
   );
+
+  expect(await errorCode(client.call({ path: ['shopping'], wgCode: 'WG 1/2' }))).toBe(
+    'invalid_share_code',
+  );
+  expect(fetchMock).toHaveBeenCalledTimes(1);
 });
 
 it('forwards the session cookie and ingests rotated cookies', async () => {
   const auth = fakeAuth();
   const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ items: [] }));
-  const client = createManaWgClient(validConfig, fetchMock, auth);
+  const client = createManaWgClient(validConfig, fetchMock, sessionCredentials(auth));
 
   await client.call({ path: ['shopping'] });
 
@@ -305,7 +310,7 @@ it('retries once on an auth-required 401 with a fresh cookie', async () => {
     .fn<typeof fetch>()
     .mockResolvedValueOnce(jsonResponse({ error: 'please sign in', code: 'auth_required' }, 401))
     .mockResolvedValueOnce(jsonResponse({ items: [] }));
-  const client = createManaWgClient(validConfig, fetchMock, auth);
+  const client = createManaWgClient(validConfig, fetchMock, sessionCredentials(auth));
 
   await expect(client.call({ path: ['shopping'] })).resolves.toEqual({ items: [] });
 
@@ -319,7 +324,7 @@ it('does not loop beyond one retry when the app keeps rejecting the session', as
   const fetchMock = vi
     .fn<typeof fetch>()
     .mockResolvedValue(jsonResponse({ error: 'nope', code: 'auth_required' }, 401));
-  const client = createManaWgClient(validConfig, fetchMock, auth);
+  const client = createManaWgClient(validConfig, fetchMock, sessionCredentials(auth));
 
   expect(await errorCode(client.call({ path: ['shopping'] }))).toBe('auth_required');
   expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -369,7 +374,7 @@ it('maps a failing session sign-in to the safe auth_failed code', async () => {
     invalidate: vi.fn(),
   };
   const fetchMock = vi.fn<typeof fetch>();
-  const client = createManaWgClient(validConfig, fetchMock, auth);
+  const client = createManaWgClient(validConfig, fetchMock, sessionCredentials(auth));
 
   expect(await errorCode(client.call({ path: ['dashboard'] }))).toBe('auth_failed');
   expect(fetchMock).not.toHaveBeenCalled();

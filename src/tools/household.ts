@@ -50,9 +50,8 @@ export const householdTools = [
     name: 'wg_create',
     title: 'Create a new flat',
     description:
-      'Creates a new flat (name 1..100, creatorName 1..80) and returns wg { id, shareCode, name } and creator { id, name }. Account-scoped and not tied to the current flat; reconnect with MANAWG_WG_CODE to use it. 3 requests per hour (wg_create_rate_limited).',
+      'Creates a new flat (name 1..100, creatorName 1..80, the name the others will see) with the caller as admin and returns wg { id, shareCode, name } and creator { id, name }. Pass shareCode as wgCode to the other tools to work in it. 3 requests per hour (wg_create_rate_limited).',
     method: 'POST',
-    gate: 'destructive',
     scope: 'account',
     input: z.strictObject({
       name: z.string().trim().min(1).max(100),

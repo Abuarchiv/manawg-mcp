@@ -157,6 +157,7 @@ export const SAFE_UPSTREAM_CODES = new Set([
   'no_new_data',
   'no_open_debt',
   'no_open_splits',
+  'no_wg_membership',
   'not_a_member',
   'not_admin',
   'not_creditor',
@@ -246,6 +247,7 @@ export const SAFE_UPSTREAM_CODES = new Set([
   'user_not_found',
   'validation_errors',
   'version_conflict',
+  'wg_code_required',
   'wg_create_rate_limited',
   'wg_not_found',
   'wg_update_forbidden',
@@ -280,12 +282,22 @@ export function isSafeCode(value: unknown): value is string {
   return typeof value === 'string' && SAFE_UPSTREAM_CODES.has(value);
 }
 
+/** What the model should do next for codes it can resolve itself. */
+const NEXT_STEP: Record<string, string> = {
+  wg_code_required: 'the account belongs to several flats: call wg_list and pass wgCode',
+  no_wg_membership: 'the account belongs to no flat yet: create or join one in the ManaWG app',
+};
+
 /** Model-facing text for any failure: allowlisted code, details and retry hint only. */
 export function describeError(error: unknown): string {
   if (!(error instanceof ManaWgError)) {
     return SAFE_ERROR_MESSAGE;
   }
   let message = `${SAFE_ERROR_MESSAGE}: ${error.code}`;
+  const next = NEXT_STEP[error.code];
+  if (next) {
+    message = `${message} (${next})`;
+  }
   if (error.details) {
     message = `${message} (${error.details})`;
   }

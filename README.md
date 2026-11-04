@@ -4,6 +4,14 @@ MCP server for a [ManaWG](https://github.com/Abuarchiv/manawg) household. Node 2
 streamable HTTP transport, 74 tools, 13 resources, 4 resource templates and 4 prompts over the
 same HTTP API the web app uses.
 
+It runs in two auth modes:
+
+- **session** (default): the server signs in one ManaWG account itself. For a local agent over
+  stdio, or a private HTTP deployment behind an API key.
+- **oauth**: the server is an OAuth 2.1 resource server for many users. Each user connects their
+  agent with the server URL and signs in to ManaWG in the browser; no secrets are copied by hand.
+  See [Hosted with OAuth](#hosted-with-oauth).
+
 ## Setup
 
 1. Install and build.
@@ -34,11 +42,13 @@ Unit tests, lint and typecheck never need credentials.
 | Variable | Required | Purpose |
 | --- | --- | --- |
 | `MANAWG_BASE_URL` | yes | Origin of the ManaWG app, e.g. `https://manawg.example` |
-| `MANAWG_WG_CODE` | yes | 8-character share code of the household |
 | `MANAWG_SUPABASE_URL` | yes | Supabase project URL behind the app |
-| `MANAWG_SUPABASE_PUBLISHABLE_KEY` | yes | Supabase publishable/anon key |
-| `MANAWG_SUPABASE_REFRESH_TOKEN` | one of | Long-lived refresh token for sign-in |
-| `MANAWG_EMAIL` + `MANAWG_PASSWORD` | one of | Password sign-in instead of a refresh token |
+| `MANAWG_AUTH` | no | `session` (default) or `oauth` |
+| `MANAWG_WG_CODE` | no | Default flat (8-character share code); without it the account's only flat is used |
+| `MANAWG_SUPABASE_PUBLISHABLE_KEY` | session | Supabase publishable/anon key |
+| `MANAWG_SUPABASE_REFRESH_TOKEN` | session, one of | Long-lived refresh token for sign-in |
+| `MANAWG_EMAIL` + `MANAWG_PASSWORD` | session, one of | Password sign-in instead of a refresh token |
+| `MANAWG_PUBLIC_URL` | oauth | Public `https` URL of the MCP endpoint, e.g. `https://mcp.manawg.example/mcp` |
 | `MANAWG_ALLOW_DESTRUCTIVE` | no | `1`/`true` registers destructive tools (default off) |
 | `MANAWG_SESSION_CACHE` | no | Session cache path (default `~/.config/manawg-mcp/session.json`) |
 | `MANAWG_TRANSPORT` | no | `stdio` (default) or `http` |
@@ -49,16 +59,26 @@ Unit tests, lint and typecheck never need credentials.
 | `MANAWG_HTTP_CORS` | no | `1` allows any browser origin to call the endpoint (default off) |
 | `MANAWG_DRAIN_MS` | no | Milliseconds `/ready` reports `503` before shutdown (default 5000) |
 
-For stdio, only `MANAWG_WG_CODE` and one sign-in mode have to be filled in by hand. For HTTP on a
-non-loopback host, also set a persistent `MANAWG_HTTP_API_KEY` (for example, generate one with
-`openssl rand -hex 32`). `MANAWG_MEMBER_ID`,
-`MANAWG_MEMBER_TOKEN` and `MANAWG_IDENTITY_CACHE` from older versions are ignored: the app derives
-the acting member from the session.
+For stdio, only one sign-in mode has to be filled in by hand. For HTTP on a non-loopback host in
+session mode, also set a persistent `MANAWG_HTTP_API_KEY` (for example, generate one with
+`openssl rand -hex 32`). `MANAWG_MEMBER_ID`, `MANAWG_MEMBER_TOKEN` and `MANAWG_IDENTITY_CACHE`
+from older versions are ignored: the app derives the acting member from the session.
+
+## Flats
+
+Every tool that works inside a flat takes an optional `wgCode` (the share code from `wg_list`).
+Without it the call goes to `MANAWG_WG_CODE`, and without that to the account's only flat. An
+account in several flats gets `wg_code_required` and passes `wgCode` from then on. One connection
+can therefore serve every flat of the account, which is what the hosted mode needs.
 
 ## Auth model
 
-The web app guards every `/api/wg/[code]` route with a live Supabase session and an
-`Origin` check, and resolves the acting member from that session. The server therefore:
+The web app guards every `/api/wg/[code]` route with a verified Supabase identity and an
+`Origin` check on writes, and resolves the acting member from that identity.
+
+### Session mode
+
+The server signs in one account and therefore:
 
 1. signs in with the refresh token or the email/password pair,
 2. stores the session in `session.json` (mode `0600`) and refreshes it before it expires,
@@ -66,6 +86,42 @@ The web app guards every `/api/wg/[code]` route with a live Supabase session and
    expects (3180-byte chunks for long sessions),
 4. sends `Origin: <MANAWG_BASE_URL>` and, on writes, a fresh `Idempotency-Key` on every request,
 5. ingests `Set-Cookie` rotations the app returns and retries once on `401 auth_required`.
+
+### OAuth mode
+
+The server holds no account. It follows the [MCP authorization
+spec](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization), with the
+[Supabase Auth OAuth 2.1 server](https://supabase.com/docs/guides/auth/oauth-server) as the
+authorization server:
+
+1. A request without a valid token gets `401` with
+   `WWW-Authenticate: Bearer resource_metadata="<origin>/.well-known/oauth-protected-resource/mcp"`.
+2. That document (RFC 9728) names `<MANAWG_SUPABASE_URL>/auth/v1` as the authorization server. The
+   client registers itself there, sends the user through the app's sign-in and consent page and
+   receives an access token. `/.well-known/oauth-authorization-server` passes the issuer's RFC 8414
+   metadata through for older clients.
+3. Each MCP request carries the token. It is verified locally against the project's JWKS
+   (`ES256`/`RS256`, issuer, audience `authenticated`, expiry) and must carry a `client_id` claim,
+   so a browser session token copied out of the app is refused.
+4. The verified token is forwarded to the app as `Authorization: Bearer`. Nothing is stored on
+   the server.
+
+Prerequisites on the app side, without which every call answers `auth_required`: the OAuth server
+enabled in the Supabase project, a consent page at the authorization path configured there, and an
+auth guard that accepts `Authorization: Bearer` (the app currently reads only its session cookie).
+
+Limits worth knowing:
+
+- Supabase sets `aud` to `authenticated`, so a token is bound to the user, not to this server: a
+  token the user granted another OAuth client of the same project is accepted too. The app's
+  member checks still apply to every call.
+- `MANAWG_PUBLIC_URL` must end in `MANAWG_HTTP_PATH`, and `MANAWG_WG_CODE` is refused: there is no
+  default flat for many users. `manawg://current/*` resources therefore need an account with one
+  flat; tools take `wgCode`.
+- Each HTTP request builds its own client, so a tool call without `wgCode` costs one extra
+  `GET /api/wg/mine`.
+- Browser clients (MCP Inspector) also need `MANAWG_HTTP_CORS=1`.
+- A JWKS that cannot be loaded answers `500 server_error`, not `401`, so clients keep their token.
 
 ## Host start
 
@@ -104,6 +160,25 @@ node dist/index.js
   endpoint cannot be called from a foreign page.
 - Startup failures are a single `config_error: …` line and exit status 1, so a bad deployment
   fails fast instead of booting broken.
+
+### Hosted with OAuth
+
+`api/mcp.js` and `vercel.json` deploy the server as one Vercel Function: every path is rewritten to
+it and `src/http.ts` routes `/mcp`, `/health`, `/ready` and the discovery documents. Set in the
+Vercel project:
+
+```bash
+MANAWG_AUTH=oauth
+MANAWG_PUBLIC_URL=https://mcp.manawg.example/mcp
+MANAWG_BASE_URL=https://manawg.example
+MANAWG_SUPABASE_URL=https://your-project.supabase.co
+```
+
+The Vercel entry refuses session mode: functions share no disk, so a rotating refresh token would
+be lost between instances. Users then add `https://mcp.manawg.example/mcp` as a remote MCP server (for example
+`claude mcp add --transport http manawg https://mcp.manawg.example/mcp`, or a custom connector in
+Claude or ChatGPT) and sign in when the client opens the browser. The same variables work for
+`node dist/index.js` and the Docker image with `MANAWG_TRANSPORT=http`.
 
 ### Docker
 
@@ -171,11 +246,15 @@ confirmation.
 | Calendar | `events_list`, `event_get`, `event_create`, `event_update`, `event_delete`†, `absences_list`, `absence_create`, `absence_delete`† |
 | Members | `members_list`, `member_get`, `member_update`†, `notifications_get`, `notifications_update`, `wg_update`† |
 | Imports | `import_preview`, `import_commit`† |
-| Account | `calendar_subscription_get`, `wg_create`† |
+| Account | `calendar_subscription_get`, `wg_create` |
 
-† destructive: only registered when `MANAWG_ALLOW_DESTRUCTIVE=1` (17 tools), and annotated with
+† destructive: only registered when `MANAWG_ALLOW_DESTRUCTIVE=1` (16 tools), and annotated with
 `destructiveHint`. GET tools and the side-effect-free `import_preview` POST are annotated
 `readOnlyHint`.
+
+On `initialize` the server sends short instructions for agents: start with `wg_overview`, pass
+`wgCode` for accounts with several flats, money in cents, read before guarded writes, never claim
+that money moved, confirm before notifying people.
 
 Input schemas mirror the API contract (money in `amountCents`, ISO datetimes with offset, split
 counts, lengths). Every tool returns the route payload as text plus `structuredContent`.
