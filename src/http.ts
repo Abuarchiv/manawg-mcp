@@ -262,7 +262,9 @@ async function writeResponse(response: Response, res: ServerResponse): Promise<v
 export function startHttpServer(options: HttpServerOptions): Promise<RunningHttpServer> {
   const handler = createHttpHandler({
     ...options,
-    localOnly: options.localOnly ?? (options.auth.kind !== 'oauth' && isLoopbackHost(options.host)),
+    // Only the keyless mode needs it: with an API key or OAuth a rebound page has no credential,
+    // and a loopback bind behind a reverse proxy keeps working.
+    localOnly: options.localOnly ?? (options.auth.kind === 'open' && isLoopbackHost(options.host)),
   });
   const drainMs = options.drainMs ?? 5_000;
   const server = createServer((request, response) => {

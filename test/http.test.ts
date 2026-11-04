@@ -223,6 +223,16 @@ it('rejects a foreign Host or Origin on a loopback bind (DNS rebinding)', async 
   expect(localhost.status).toBe(200);
 });
 
+it('accepts the public Host of a reverse proxy in front of a loopback bind with an API key', async () => {
+  const running = await startHttp({ auth: { kind: 'api-key', apiKey: 'k'.repeat(32) } });
+  const proxied = await rawRequest(running, {
+    ...MCP_HEADERS,
+    host: 'mcp.example.org',
+    authorization: `Bearer ${'k'.repeat(32)}`,
+  });
+  expect(proxied.status).toBe(200);
+});
+
 it('keeps the Host check on a loopback bind when CORS is on and lets cross-origin browsers in', async () => {
   const cors = await startHttp({ cors: true });
   const foreignHost = await rawRequest(cors, { ...MCP_HEADERS, host: 'evil.example' });
