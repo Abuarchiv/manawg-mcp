@@ -1,3 +1,4 @@
+import { isIP } from 'node:net';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -99,6 +100,15 @@ const DEFAULT_HTTP: HttpTransportConfig = {
   drainMs: 5_000,
 };
 
+function isLoopbackHost(host: string): boolean {
+  const version = isIP(host);
+  return (
+    host.toLowerCase() === 'localhost' ||
+    (version === 4 && host.split('.')[0] === '127') ||
+    (version === 6 && host === '::1')
+  );
+}
+
 function transport(env: NodeJS.ProcessEnv): TransportName {
   const value = env.MANAWG_TRANSPORT?.trim().toLowerCase();
   if (!value || value === 'stdio') {
@@ -164,6 +174,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
   const origin = new URL(baseUrl).origin;
 
   const wgCode = required(env, 'MANAWG_WG_CODE');
+  const transportName = transport(env);
+  const http = httpTransport(env);
+  if (transportName === 'http' && !http.apiKey && !isLoopbackHost(http.host)) {
+    throw new Error('MANAWG_HTTP_API_KEY is required when MANAWG_HTTP_HOST is not loopback');
+  }
 
   return {
     baseUrl,
@@ -172,7 +187,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     timeoutMs: DEFAULT_TIMEOUT_MS,
     auth: loadAuthConfig(env),
     allowDestructive: allowDestructive(env),
-    transport: transport(env),
-    http: httpTransport(env),
+    transport: transportName,
+    http,
   };
 }

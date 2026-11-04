@@ -97,6 +97,38 @@ it('reads the http transport settings from the environment', () => {
   });
 });
 
+it('requires an API key when HTTP binds outside loopback', () => {
+  const message = thrownMessage(() =>
+    loadConfig({
+      ...validEnv(),
+      MANAWG_TRANSPORT: 'http',
+      MANAWG_HTTP_HOST: '0.0.0.0',
+    }),
+  );
+
+  expect(message).toContain('MANAWG_HTTP_API_KEY');
+});
+
+it.each(['127.0.0.1', '127.0.0.2', '::1', 'localhost'])(
+  'allows a keyless HTTP bind on loopback host %s',
+  (host) => {
+    const config = loadConfig({
+      ...validEnv(),
+      MANAWG_TRANSPORT: 'http',
+      MANAWG_HTTP_HOST: host,
+    });
+
+    expect(config.http.apiKey).toBeUndefined();
+  },
+);
+
+it('does not require an HTTP API key when stdio is selected', () => {
+  const config = loadConfig({ ...validEnv(), MANAWG_HTTP_HOST: '0.0.0.0' });
+
+  expect(config.transport).toBe('stdio');
+  expect(config.http.apiKey).toBeUndefined();
+});
+
 it('rejects an unknown transport name', () => {
   expect(thrownMessage(() => loadConfig({ ...validEnv(), MANAWG_TRANSPORT: 'grpc' }))).toContain(
     'MANAWG_TRANSPORT',

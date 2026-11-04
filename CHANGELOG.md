@@ -20,6 +20,11 @@
 - `cash_payment_record` and `cash_payment_void`† for entering and taking back a cash payment over
   the net debt of a pair (`/api/wg/<code>/payments/manual`).
 
+### Security
+
+- HTTP transport now requires `MANAWG_HTTP_API_KEY` when bound to a non-loopback host. Keyless
+  HTTP remains available on loopback.
+
 ### Fixed (contract audit against the app routes)
 
 - `wg_create` called `/api/wg/wg`; it now posts to `/api/wg`, and `creatorName` is limited to 80.

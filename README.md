@@ -45,11 +45,13 @@ Unit tests, lint and typecheck never need credentials.
 | `MANAWG_HTTP_HOST` | no | Bind address for `http` (default `127.0.0.1`, `0.0.0.0` in the container) |
 | `MANAWG_HTTP_PORT` | no | Port for `http` (default `8080`) |
 | `MANAWG_HTTP_PATH` | no | MCP endpoint path for `http` (default `/mcp`) |
-| `MANAWG_HTTP_API_KEY` | no | Bearer token guarding the MCP endpoint, minimum 16 characters |
+| `MANAWG_HTTP_API_KEY` | no | Bearer token, minimum 16 characters; required when HTTP binds beyond loopback |
 | `MANAWG_HTTP_CORS` | no | `1` allows any browser origin to call the endpoint (default off) |
 | `MANAWG_DRAIN_MS` | no | Milliseconds `/ready` reports `503` before shutdown (default 5000) |
 
-Only `MANAWG_WG_CODE` and one sign-in mode have to be filled in by hand. `MANAWG_MEMBER_ID`,
+For stdio, only `MANAWG_WG_CODE` and one sign-in mode have to be filled in by hand. For HTTP on a
+non-loopback host, also set a persistent `MANAWG_HTTP_API_KEY` (for example, generate one with
+`openssl rand -hex 32`). `MANAWG_MEMBER_ID`,
 `MANAWG_MEMBER_TOKEN` and `MANAWG_IDENTITY_CACHE` from older versions are ignored: the app derives
 the acting member from the session.
 
@@ -85,9 +87,9 @@ claude mcp add manawg --env-file ~/.config/manawg-mcp/env -- node "$(pwd)/dist/i
 ### HTTP transport
 
 ```bash
+# Store a persistent MANAWG_HTTP_API_KEY in the env file before starting the server.
 set -a; source ~/.config/manawg-mcp/env; set +a
 export MANAWG_TRANSPORT=http MANAWG_HTTP_HOST=0.0.0.0 MANAWG_HTTP_PORT=8080
-export MANAWG_HTTP_API_KEY="$(openssl rand -hex 32)"
 node dist/index.js
 ```
 
@@ -104,6 +106,10 @@ node dist/index.js
   fails fast instead of booting broken.
 
 ### Docker
+
+Set a persistent `MANAWG_HTTP_API_KEY` in the env file before running the container. Generate a
+value once with `openssl rand -hex 32` and store it there; the Docker command loads it from that
+file.
 
 ```bash
 docker build -t manawg-mcp .
