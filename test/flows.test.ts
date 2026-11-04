@@ -115,6 +115,40 @@ it('books an expense, previews the settlement and commits the preview unchanged'
   });
 });
 
+it('commits a mutual-debt settlement with the offset split of the preview', async () => {
+  const h = await harness();
+  await h.call('expense_create', {
+    amountCents: 1000,
+    description: 'Pizza',
+    splits: [{ debtorMemberId: MEMBER_B, amountCents: 1000 }],
+  });
+  await h.call('expense_create', {
+    amountCents: 300,
+    description: 'Bus',
+    paidByMemberId: MEMBER_B,
+    splits: [{ debtorMemberId: MEMBER_A, amountCents: 300 }],
+  });
+  h.app.state.offsetSplits.push(String(h.app.state.expenses[1]?.splits[0]?.id));
+
+  const preview = await h.call('settlement_preview', {
+    fromMemberId: MEMBER_B,
+    toMemberId: MEMBER_A,
+  });
+  expect(preview.settleableCents).toBe(700);
+
+  await h.call('settlement_commit', {
+    fromMemberId: MEMBER_B,
+    toMemberId: MEMBER_A,
+    currency: 'EUR',
+    expected: preview,
+  });
+  expect(h.app.seen.at(-1)?.body).toMatchObject({
+    expected: {
+      splits: [{ amountCents: 1000 }, { amountCents: 300, offset: true }],
+    },
+  });
+});
+
 it('sends an idempotency key on every write and none on reads', async () => {
   const h = await harness();
 

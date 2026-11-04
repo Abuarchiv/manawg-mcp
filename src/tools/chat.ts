@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { imageUrl, uuid } from './shared.js';
+import { uuid } from './shared.js';
 import { defineTool } from './types.js';
 
 const body = z.string().trim().min(1).max(4000);
@@ -23,11 +23,10 @@ export const chatTools = [
     name: 'chat_send',
     title: 'Send a chat message',
     description:
-      'Writes to the flat chat as the signed-in member. body up to 4000 characters or imageUrl; both empty is not allowed (empty_message). replyToMessageId and mentionMemberIds (uuid[], max 20) are optional. imageUrl must be an upload URL issued by the app (otherwise image_invalid; deleted uploads give image_removed).',
+      'Writes a text message to the flat chat as the signed-in member. body is required, up to 4000 characters (blank gives empty_message). Messages carry text only, no images. replyToMessageId and mentionMemberIds (uuid[], max 20) are optional.',
     method: 'POST',
     input: z.strictObject({
-      body: body.optional(),
-      imageUrl,
+      body,
       replyToMessageId: uuid.optional(),
       mentionMemberIds: z.array(uuid).max(20).optional(),
     }),
@@ -86,7 +85,7 @@ export const chatTools = [
     name: 'chat_delete',
     title: 'Delete a chat message',
     description:
-      'Removes the message for everyone; its text and image are no longer shown. Allowed for the author or an admin; deleting again is harmless.',
+      'Removes the message for everyone; its text is no longer shown. Allowed for the author or an admin; deleting again is harmless.',
     method: 'DELETE',
     gate: 'destructive',
     input: z.strictObject({ id: uuid }),

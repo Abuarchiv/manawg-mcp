@@ -8,6 +8,8 @@ const exportSection = z.enum([
   'recurringExpenses',
   'shoppingItems',
   'chores',
+  'choreCompletions',
+  'inventory',
   'absences',
   'announcements',
   'announcementComments',
@@ -31,7 +33,7 @@ export const overviewTools = [
     name: 'wg_overview',
     title: 'Flat overview',
     description:
-      'Manifest of the connected flat: wg (name, shareCode, joiningEnabled), members (id, name, color) and currentMember. The starting point for every task; use the memberId values from here in all other tools.',
+      'Manifest of the connected flat: wg (id, name, shareCode, createdAt), members (id, name, color) and currentMember. The starting point for every task; use the memberId values from here in all other tools.',
     method: 'GET',
     input: z.strictObject({}),
     path: () => [],
@@ -58,7 +60,7 @@ export const overviewTools = [
     name: 'export_get',
     title: 'Export flat data',
     description:
-      'Export of the flat data. format json returns all sections or only those named in sections; format csv returns exactly ONE section (section, expenses when omitted) as { contentType, content }. Sections: members, expenses, expensePayments, recurringExpenses, shoppingItems, chores, absences, announcements, announcementComments, events, chatMessages, auditEvents. limit up to 100000 and offset for paging (members are never paged).',
+      'Export of the flat data. format json returns all sections or only those named in sections; format csv returns exactly ONE section (section, expenses when omitted) as { contentType, content }. Sections: members, expenses, expensePayments, recurringExpenses, shoppingItems, chores, choreCompletions, inventory, absences, announcements, announcementComments, events, chatMessages, auditEvents. limit up to 100000 and offset for paging (members are never paged).',
     method: 'GET',
     input: z.strictObject({
       format: z.enum(['json', 'csv']).default('json'),

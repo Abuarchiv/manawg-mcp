@@ -12,6 +12,7 @@ const notifyFlags = z.strictObject({
   notifyReminders: z.boolean().optional(),
   notifyChat: z.boolean().optional(),
   notifyEvents: z.boolean().optional(),
+  notifyStatementEmail: z.boolean().optional(),
   quietStartHour: z.number().int().min(0).max(23).nullable().optional(),
   quietEndHour: z.number().int().min(0).max(23).nullable().optional(),
 });
@@ -78,13 +79,11 @@ export const memberTools = [
     name: 'wg_update',
     title: 'Change flat settings (admin)',
     description:
-      'name 1..100, joiningEnabled turns joining on or off, rotateShareCode true creates a NEW 8-character join code and turns joining on. The old code stops working: pass the new code as wgCode from then on (and update MANAWG_WG_CODE if it is set), otherwise calls answer wg_not_found. Admins only (not_admin), at least one field.',
+      'Renames the flat: name 1..100 (required). The name is the only setting that can be changed. Admins only (not_admin).',
     method: 'PATCH',
     gate: 'destructive',
     input: z.strictObject({
-      name: z.string().trim().min(1).max(100).optional(),
-      joiningEnabled: z.boolean().optional(),
-      rotateShareCode: z.boolean().optional(),
+      name: z.string().trim().min(1).max(100),
     }),
     path: () => [],
     body: (input) => input,

@@ -15,7 +15,16 @@ import { defineTool } from './types.js';
 const settlementPreview = z.looseObject({
   netCents: z.number().int().min(0),
   settleableCents: z.number().int().min(0),
-  splits: z.array(z.looseObject({ id: uuid, amountCents: z.number().int().min(0) })).max(500),
+  splits: z
+    .array(
+      z.looseObject({
+        id: uuid,
+        amountCents: z.number().int().min(0),
+        /** Set on a split that cancels a counter-debt; it reduces the settleable total. */
+        offset: z.boolean().optional(),
+      }),
+    )
+    .max(500),
 });
 
 export const financeTools = [
@@ -84,14 +93,13 @@ export const financeTools = [
     name: 'expense_update',
     title: 'Edit an expense',
     description:
-      'Only the payer may edit (not_payer). amountCents also needs the complete splits (splits_required_with_amount). expectedUpdatedAt (ISO) guards against concurrent edits: 409 expense_changed means read again and decide.',
+      'Only the payer may edit (not_payer). The currency cannot be changed after creation. amountCents also needs the complete splits (splits_required_with_amount). expectedUpdatedAt (ISO) guards against concurrent edits: 409 expense_changed means read again and decide.',
     method: 'PATCH',
     input: z.strictObject({
       id: uuid,
       description: description.optional(),
       category: expenseCategory.optional(),
       amountCents: amountCents.optional(),
-      currency: z.enum(['EUR', 'CHF', 'USD', 'GBP']).optional(),
       splits: z.array(splitSchema).min(1).max(50).optional(),
       expectedUpdatedAt: isoDateTime.optional(),
       imageUrl,
@@ -144,7 +152,7 @@ export const financeTools = [
     name: 'settlement_commit',
     title: 'Commit a settlement',
     description:
-      'Marks several open splits as settled in one step. expected is the unchanged result of settlement_preview (the MCP server forwards only currency, netCents, settleableCents and splits[id, amountCents]); otherwise 409 settlement_changed, then preview again.',
+      'Marks several open splits as settled in one step. expected is the unchanged result of settlement_preview (the MCP server forwards only currency, netCents, settleableCents and splits[id, amountCents, offset]); otherwise 409 settlement_changed, then preview again.',
     method: 'POST',
     input: z.strictObject({
       fromMemberId: uuid,
@@ -160,7 +168,11 @@ export const financeTools = [
         currency: rest.currency,
         netCents: expected.netCents,
         settleableCents: expected.settleableCents,
-        splits: expected.splits.map(({ id, amountCents }) => ({ id, amountCents })),
+        splits: expected.splits.map(({ id, amountCents, offset }) => ({
+          id,
+          amountCents,
+          ...(offset ? { offset: true } : {}),
+        })),
       },
     }),
   }),
