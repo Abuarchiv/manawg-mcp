@@ -1,9 +1,11 @@
 # Changelog
 
-## 0.2.0 (unreleased)
+## 0.2.0 (2026-11-04)
 
-### Added (hosted mode)
+### Added
 
+- `server.json` for the official MCP Registry, where the hosted server is listed as
+  `com.manawg/mcp`.
 - `MANAWG_AUTH=oauth`: the HTTP transport acts as an OAuth 2.1 resource server for many users.
   It serves RFC 9728 protected resource metadata, answers `401` with a `resource_metadata`
   challenge, verifies Supabase access tokens against the project's JWKS (issuer, audience, expiry,
@@ -14,21 +16,6 @@
 - Vercel deployment (`api/mcp.js`, `vercel.json`); `src/http.ts` is now a web-standard handler
   that the Node listener, the Docker image and the Vercel Function share.
 
-### Changed
-
-- `wg_create` is no longer gated behind `MANAWG_ALLOW_DESTRUCTIVE`: it only creates.
-- `MANAWG_WG_CODE` must be a share code the app issues (8 characters, Crockford base32).
-
-### Removed
-
-- `paypal_order_create` and `paypal_capture`: the app no longer has PayPal. Their error codes and
-  the `paypalMerchantId` mentions in the member tools are gone.
-- `member_claim`: the app removed its claim route for members from before accounts, so the tool,
-  the request headers it needed and the codes `account_already_linked`, `member_already_linked` and
-  `legacy_proof_required` are gone.
-
-### Added
-
 - `category` on `expense_create`, `expense_update`, `recurring_create` and `recurring_update`
   (`groceries|household|housing|leisure|transport|other`); expenses created here no longer all land
   in `other`.
@@ -36,33 +23,6 @@
   concurrent edits answer `announcement_changed` / `event_changed` instead of overwriting.
 - `cash_payment_record` and `cash_payment_void`† for entering and taking back a cash payment over
   the net debt of a pair (`/api/wg/<code>/payments/manual`).
-
-### Security
-
-- HTTP transport now requires `MANAWG_HTTP_API_KEY` when bound to a non-loopback host. Keyless
-  HTTP remains available on loopback.
-
-### Fixed (contract audit against the app routes)
-
-- `wg_create` called `/api/wg/wg`; it now posts to `/api/wg`, and `creatorName` is limited to 80.
-- Removed the `search` tool: the app has no search route, every call was a 404.
-- `settlement_commit` sent the raw preview as `expected`; the app rejects unknown keys, so it is now
-  reduced to `currency`, `netCents`, `settleableCents` and `splits[id, amountCents]`.
-- `recurring_advance` takes only `id` + `expectedNextDueAt` (any override silently switched the app
-  to a template edit); `expense_create` gained `recurringExpenseId` / `expectedRecurringNextDueAt`
-  for booking a due charge; `recurring_update` accepts `expectedNextDueAt`.
-- `chore_create` no longer drops `intervalMonths` (monthly cadence is `recurrenceType: months`);
-  `recurrenceType` is `days|months`. `inventory_consume` rejects `delta: 0`, `chat_send` allows 20
-  mentions, `event_update` can clear `description`/`location`/`recurrence`/`endsAt` with `null`.
-- `export_get` returned `{}` for `format: csv`; non-JSON responses now come back as
-  `{ contentType, content }`, `sections` is sent for JSON, and oversized strings are capped.
-- The error allowlist grew from 130 to 241 codes, so conflicts such as `chore_changed`,
-  `expense_conflict`, `not_admin`, `message_deleted` or `payload_changed` reach the model instead of
-  `upstream_http_409`.
-- Tool descriptions corrected where they promised behaviour the app does not have (permissions,
-  response fields, limits, error codes).
-
-### Added
 
 - `chat_unreact` (DELETE of an own reaction) — the only way to undo `chat_react`.
 - Regression flows (`test/flows.test.ts`) running the real session controller, client and MCP server
@@ -72,21 +32,6 @@
 - API surface check (`test/api-surface.test.ts`): every tool and resource must map to a route in
   `test/fixtures/app-routes.json`, a snapshot of the app's `/api/wg` routes.
 - Trimmed the unit tests that only restated single paths, defaults or schema limits.
-
-### Changed
-
-- Tool titles and descriptions, resources and prompts are in English. The prompts answer in the
-  language of the conversation; their arguments are now `focus` (`daily_brief`) and `tone`
-  (`payment_reminder`) instead of `fokus` and `ton`.
-- The inventory tools use the app's English keys for `unit` and `category`.
-- The member identity bootstrap, `identity.json` and `MANAWG_MEMBER_ID` / `MANAWG_MEMBER_TOKEN` /
-  `MANAWG_IDENTITY_CACHE` are gone: the app resolves the member from the session cookie and never
-  returned a member token. The variables are ignored if still set.
-- Internals split into focused modules: `errors.ts` (allowlist, `ManaWgError`, `describeError`),
-  `register.ts` (resources, prompts, tools), `version.ts`, `ids.ts`; `auth.ts` Set-Cookie handling is
-  pure functions; the build uses `tsconfig.build.json` instead of a long command line.
-
-### Added
 
 - Supabase session auth: password/refresh-token sign-in, `sb-*-auth-token` cookie serialization
   (chunked like `@supabase/ssr`), session cache with `0600` permissions, `Set-Cookie` ingestion and
@@ -139,6 +84,22 @@
 
 ### Changed
 
+- The container image builds on `node:22-alpine`, so every rebuild picks up the current Node 22
+  security releases instead of staying on 22.12.
+- `wg_create` is no longer gated behind `MANAWG_ALLOW_DESTRUCTIVE`: it only creates.
+- `MANAWG_WG_CODE` must be a share code the app issues (8 characters, Crockford base32).
+
+- Tool titles and descriptions, resources and prompts are in English. The prompts answer in the
+  language of the conversation; their arguments are now `focus` (`daily_brief`) and `tone`
+  (`payment_reminder`) instead of `fokus` and `ton`.
+- The inventory tools use the app's English keys for `unit` and `category`.
+- The member identity bootstrap, `identity.json` and `MANAWG_MEMBER_ID` / `MANAWG_MEMBER_TOKEN` /
+  `MANAWG_IDENTITY_CACHE` are gone: the app resolves the member from the session cookie and never
+  returned a member token. The variables are ignored if still set.
+- Internals split into focused modules: `errors.ts` (allowlist, `ManaWgError`, `describeError`),
+  `register.ts` (resources, prompts, tools), `version.ts`, `ids.ts`; `auth.ts` Set-Cookie handling is
+  pure functions; the build uses `tsconfig.build.json` instead of a long command line.
+
 - Tool annotations gained an explicit `readOnly` override so a side-effect-free POST such as
   `import_preview` advertises `readOnlyHint` instead of looking like a write.
 - `expenses_list` accepts `limit` (1..500, default 100) and `offset`, slices the unpaginated
@@ -156,8 +117,39 @@
 - The advertised server version comes from `package.json` instead of a second hard-coded copy.
 - A configuration error exits with a single `config_error: …` line instead of a stack trace.
 
+### Removed
+
+- `paypal_order_create` and `paypal_capture`: the app no longer has PayPal. Their error codes and
+  the `paypalMerchantId` mentions in the member tools are gone.
+- `member_claim`: the app removed its claim route for members from before accounts, so the tool,
+  the request headers it needed and the codes `account_already_linked`, `member_already_linked` and
+  `legacy_proof_required` are gone.
+
 ### Fixed
+
+- `wg_create` called `/api/wg/wg`; it now posts to `/api/wg`, and `creatorName` is limited to 80.
+- Removed the `search` tool: the app has no search route, every call was a 404.
+- `settlement_commit` sent the raw preview as `expected`; the app rejects unknown keys, so it is now
+  reduced to `currency`, `netCents`, `settleableCents` and `splits[id, amountCents]`.
+- `recurring_advance` takes only `id` + `expectedNextDueAt` (any override silently switched the app
+  to a template edit); `expense_create` gained `recurringExpenseId` / `expectedRecurringNextDueAt`
+  for booking a due charge; `recurring_update` accepts `expectedNextDueAt`.
+- `chore_create` no longer drops `intervalMonths` (monthly cadence is `recurrenceType: months`);
+  `recurrenceType` is `days|months`. `inventory_consume` rejects `delta: 0`, `chat_send` allows 20
+  mentions, `event_update` can clear `description`/`location`/`recurrence`/`endsAt` with `null`.
+- `export_get` returned `{}` for `format: csv`; non-JSON responses now come back as
+  `{ contentType, content }`, `sections` is sent for JSON, and oversized strings are capped.
+- The error allowlist grew from 130 to 241 codes, so conflicts such as `chore_changed`,
+  `expense_conflict`, `not_admin`, `message_deleted` or `payload_changed` reach the model instead of
+  `upstream_http_409`.
+- Tool descriptions corrected where they promised behaviour the app does not have (permissions,
+  response fields, limits, error codes).
 
 - V1 could never complete a request: routes require a live Supabase session and an `Origin`
   header, neither of which the server sent. Both are now provided and verified by
   `pnpm live-check`.
+
+### Security
+
+- HTTP transport now requires `MANAWG_HTTP_API_KEY` when bound to a non-loopback host. Keyless
+  HTTP remains available on loopback.

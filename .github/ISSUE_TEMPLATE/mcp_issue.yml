@@ -19,5 +19,5 @@ body:
     id: setup
     attributes:
       label: Setup
-      description: Transport, MCP host and server version.
-      placeholder: stdio, Claude Desktop, 0.2.0
+      description: Hosted (mcp.manawg.com) or self-hosted, transport, MCP client and server version.
+      placeholder: hosted, Claude Code 2.1
