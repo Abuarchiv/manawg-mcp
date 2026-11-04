@@ -7,7 +7,11 @@ import { join } from 'node:path';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { createSessionController } from '../../src/auth.js';
 import type { AppConfig } from '../../src/config.js';
-import { createManaWgClient } from '../../src/manawg-client.js';
+import {
+  bearerCredentials,
+  createManaWgClient,
+  sessionCredentials,
+} from '../../src/manawg-client.js';
 import { buildServer } from '../../src/server.js';
 
 /**
@@ -18,6 +22,10 @@ import { buildServer } from '../../src/server.js';
 
 export const MEMBER_A = '00000000-0000-4000-8000-00000000000a';
 export const MEMBER_B = '00000000-0000-4000-8000-00000000000b';
+export const WG_CODE = 'K7Q2M9XD';
+export const SECOND_WG_CODE = 'H4N8R2TB';
+/** The access token the stub accepts as `Authorization: Bearer` (hosted OAuth mode). */
+export const BEARER_TOKEN = 'oauth-access-token';
 const COOKIE = 'sb-127-auth-token';
 
 export type Seen = {
@@ -50,7 +58,14 @@ export type StubApp = {
   failNext: (count: number, status: number, headers?: Record<string, string>) => void;
   /** Make the app unreachable (connection refused) for subsequent requests. */
   goOffline: () => Promise<void>;
-  state: { shopping: Shopping[]; chores: Chore[]; expenses: Expense[]; reactions: string[] };
+  state: {
+    shopping: Shopping[];
+    chores: Chore[];
+    expenses: Expense[];
+    reactions: string[];
+    /** Share codes `/api/wg/mine` lists; every listed flat is served. */
+    wgs: string[];
+  };
   close: () => Promise<void>;
 };
 
@@ -94,7 +109,13 @@ function sessionToken(header: string | undefined): string | undefined {
 }
 
 export async function startStubApp(): Promise<StubApp> {
-  const state: StubApp['state'] = { shopping: [], chores: [], expenses: [], reactions: [] };
+  const state: StubApp['state'] = {
+    shopping: [],
+    chores: [],
+    expenses: [],
+    reactions: [],
+    wgs: [WG_CODE],
+  };
   const seen: Seen[] = [];
   let tokens = 0;
   let revoke = false;
@@ -137,7 +158,8 @@ export async function startStubApp(): Promise<StubApp> {
     if (req.headers.origin !== origin) {
       return fail(res, 403, 'cross_origin_blocked');
     }
-    if (!sessionToken(req.headers.cookie) || revoke) {
+    const bearer = req.headers.authorization === `Bearer ${BEARER_TOKEN}`;
+    if ((!bearer && !sessionToken(req.headers.cookie)) || revoke) {
       revoke = false;
       return fail(res, 401, 'auth_required');
     }
@@ -154,14 +176,20 @@ export async function startStubApp(): Promise<StubApp> {
 
     // Account routes (no WG code).
     if (method === 'POST' && parts.length === 0) {
-      return reply(res, 201, { wg: { id: 'w2', shareCode: 'NEWCODE1', name: input.name } });
+      state.wgs.push(SECOND_WG_CODE);
+      return reply(res, 201, { wg: { id: 'w2', shareCode: SECOND_WG_CODE, name: input.name } });
     }
     if (parts[0] === 'mine') {
       return reply(res, 200, {
-        wgs: [{ id: 'w1', memberId: MEMBER_A, name: 'WG', code: 'WG123' }],
+        wgs: state.wgs.map((code, index) => ({
+          id: `w${index + 1}`,
+          memberId: MEMBER_A,
+          name: `WG ${index + 1}`,
+          code,
+        })),
       });
     }
-    if (parts[0] !== 'WG123') {
+    if (!parts[0] || !state.wgs.includes(parts[0])) {
       return fail(res, 404, 'wg_not_found');
     }
     const [, resource, id, action] = parts;
@@ -169,7 +197,7 @@ export async function startStubApp(): Promise<StubApp> {
 
     if (!resource) {
       return reply(res, 200, {
-        wg: { name: 'WG', shareCode: 'WG123' },
+        wg: { name: 'WG', shareCode: parts[0] },
         members: [{ id: MEMBER_A }, { id: MEMBER_B }],
         currentMember: { memberId: MEMBER_A, name: 'Ada' },
       });
@@ -345,16 +373,29 @@ export type Harness = {
 };
 
 export async function startHarness(
-  options: { allowDestructive?: boolean; retryDelaysMs?: number[] } = {},
+  options: {
+    allowDestructive?: boolean;
+    retryDelaysMs?: number[];
+    /** Default flat; `null` leaves it unset so the client resolves the account's only flat. */
+    defaultWgCode?: string | null;
+    /** `bearer` acts like hosted OAuth mode: a forwarded access token instead of a session. */
+    credentials?: 'session' | 'bearer';
+    wgs?: string[];
+  } = {},
 ): Promise<Harness> {
   const app = await startStubApp();
+  if (options.wgs) {
+    app.state.wgs = options.wgs;
+  }
   const cache = join(tmpdir(), `manawg-flow-${randomUUID()}.json`);
+  const defaultWgCode = options.defaultWgCode === undefined ? WG_CODE : options.defaultWgCode;
   const config: AppConfig = {
     baseUrl: app.origin,
     origin: app.origin,
-    wgCode: 'WG123',
+    ...(defaultWgCode ? { defaultWgCode } : {}),
     timeoutMs: 5_000,
     auth: {
+      mode: 'session',
       url: app.origin,
       publishableKey: 'sb_publishable_test',
       email: 'ada@example.test',
@@ -365,8 +406,11 @@ export async function startHarness(
     transport: 'stdio',
     http: { host: '127.0.0.1', port: 0, path: '/mcp', cors: false, drainMs: 0 },
   };
-  const auth = createSessionController(config.auth);
-  const manaWg = createManaWgClient(config, fetch, auth, {
+  const credentials =
+    options.credentials === 'bearer' || config.auth.mode !== 'session'
+      ? bearerCredentials(BEARER_TOKEN)
+      : sessionCredentials(createSessionController(config.auth));
+  const manaWg = createManaWgClient(config, fetch, credentials, {
     retryDelaysMs: options.retryDelaysMs ?? [1, 1],
   });
   const server = buildServer(manaWg, { allowDestructive: config.allowDestructive });

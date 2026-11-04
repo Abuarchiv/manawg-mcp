@@ -21,6 +21,7 @@ async function startHttp(options: Partial<HttpServerOptions> = {}): Promise<Runn
     port: 0,
     path: '/mcp',
     drainMs: 0,
+    auth: { kind: 'open' },
     createServer: () => buildServer(fakeClient()),
     ...options,
   });
@@ -100,7 +101,7 @@ it('serves initialize and tools/list over http', async () => {
 
 it('guards the mcp endpoint with a bearer api key and leaves health open', async () => {
   const apiKey = 'deploy-secret-0123456789';
-  const running = await startHttp({ apiKey });
+  const running = await startHttp({ auth: { kind: 'api-key', apiKey } });
 
   const health = await fetch(`${originOf(running)}/health`);
   expect(health.status).toBe(200);
@@ -119,7 +120,9 @@ it('guards the mcp endpoint with a bearer api key and leaves health open', async
 });
 
 it('answers unknown paths with 404 and never leaks configuration', async () => {
-  const running = await startHttp({ apiKey: 'deploy-secret-0123456789' });
+  const running = await startHttp({
+    auth: { kind: 'api-key', apiKey: 'deploy-secret-0123456789' },
+  });
 
   const response = await fetch(`${originOf(running)}/secret-path`);
 

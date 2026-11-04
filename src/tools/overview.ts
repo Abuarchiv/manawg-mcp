@@ -21,7 +21,7 @@ export const overviewTools = [
     name: 'wg_list',
     title: 'List your flats',
     description:
-      'All flats of the signed-in account with name, code (share code) and memberId, independent of MANAWG_WG_CODE, so switching or recovering works without local state.',
+      'All flats of the signed-in account with name, code (share code) and memberId. When there is more than one, pass the code as wgCode to every other tool.',
     method: 'GET',
     input: z.strictObject({}),
     path: () => ['mine'],

@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 const here = dirname(fileURLToPath(import.meta.url));
 const serverPath = join(here, '..', 'dist', 'index.js');
 
-const EXPECTED_TOOLS = 57;
+const EXPECTED_TOOLS = 58;
 const EXPECTED_RESOURCES = 13;
 const EXPECTED_TEMPLATES = 4;
 const EXPECTED_PROMPTS = 4;
@@ -19,9 +19,6 @@ const EXPECTED_PROMPTS = 4;
 function placeholderEnv() {
   return {
     MANAWG_BASE_URL: 'https://example.invalid',
-    MANAWG_WG_CODE: 'SMOKE0000',
-    MANAWG_MEMBER_ID: '00000000-0000-4000-8000-000000000000',
-    MANAWG_MEMBER_TOKEN: 'a'.repeat(64),
     MANAWG_SUPABASE_URL: 'https://smoke.supabase.co',
     MANAWG_SUPABASE_PUBLISHABLE_KEY: 'sb_publishable_smoke',
     MANAWG_EMAIL: 'smoke@example.test',
@@ -124,6 +121,9 @@ const init = await request(1, 'initialize', {
 if (init?.serverInfo?.name !== 'manawg-mcp') {
   fail(`unexpected serverInfo ${JSON.stringify(init?.serverInfo ?? null)}`);
 }
+if (!init.instructions?.includes('wg_overview')) {
+  fail('initialize carries no server instructions');
+}
 console.error(`initialize: ok protocol=${init.protocolVersion}`);
 
 send({ jsonrpc: '2.0', method: 'notifications/initialized' });
@@ -149,6 +149,12 @@ const destructive = (tools.tools ?? []).filter(
 
 if (toolNames.length !== EXPECTED_TOOLS) {
   fail(`expected ${EXPECTED_TOOLS} tools, got ${toolNames.length}`);
+}
+const withoutWgCode = (tools.tools ?? []).filter(
+  (tool) => !['wg_list', 'wg_create'].includes(tool.name) && !tool.inputSchema?.properties?.wgCode,
+);
+if (withoutWgCode.length > 0) {
+  fail(`flat tools without wgCode: ${withoutWgCode.map((tool) => tool.name).join(',')}`);
 }
 if (new Set(toolNames).size !== toolNames.length) {
   fail('duplicate tool names');

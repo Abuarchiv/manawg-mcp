@@ -1,25 +1,33 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
-import { createMcpHandler, type McpServer } from '@modelcontextprotocol/server';
+import {
+  createMcpHandler,
+  type McpServerFactory,
+  type OAuthTokenVerifier,
+  requireBearerAuth,
+} from '@modelcontextprotocol/server';
+import type { OAuthConfig } from './config.js';
+import { createDiscovery, protectedResourceMetadataUrl } from './oauth.js';
 import { serverVersion } from './version.js';
 
-export type HttpServerOptions = {
-  host: string;
-  port: number;
+/** How the MCP endpoint authenticates callers. */
+export type HttpAuth =
+  | { kind: 'open' }
+  | { kind: 'api-key'; apiKey: string }
+  | { kind: 'oauth'; oauth: OAuthConfig; verifier: OAuthTokenVerifier; fetchImpl?: typeof fetch };
+
+export type HttpHandlerOptions = {
   path: string;
-  apiKey?: string;
+  auth: HttpAuth;
   cors?: boolean;
-  drainMs?: number;
-  createServer: () => McpServer;
+  createServer: McpServerFactory;
   onServerError?: (error: Error) => void;
 };
 
-export type RunningHttpServer = {
-  server: Server;
-  url: string;
-  port: number;
-  /** Stops accepting connections and reports `/ready` as 503 for the drain window. */
-  beginShutdown: () => Promise<void>;
+/** The whole HTTP surface as a web-standard handler: Node, Docker and Vercel share it. */
+export type HttpHandler = {
+  fetch: (request: Request) => Promise<Response>;
+  setReady: (ready: boolean) => void;
   close: () => Promise<void>;
 };
 
@@ -32,19 +40,134 @@ const CORS_ALLOW_HEADERS = [
 ].join(', ');
 const CORS_ALLOW_METHODS = 'GET, POST, DELETE, OPTIONS';
 
-const JSON_HEADERS = { 'content-type': 'application/json; charset=utf-8' };
+function json(status: number, payload: unknown, head = false, headers: HeadersInit = {}): Response {
+  return new Response(head ? null : JSON.stringify(payload), {
+    status,
+    headers: { 'content-type': 'application/json; charset=utf-8', ...headers },
+  });
+}
+
+function apiKeyMatches(header: string | null, apiKey: string): boolean {
+  if (!header?.startsWith('Bearer ')) return false;
+  const presented = createHash('sha256').update(header.slice('Bearer '.length)).digest();
+  const expected = createHash('sha256').update(apiKey).digest();
+  return timingSafeEqual(presented, expected);
+}
+
+function withCors(response: Response): Response {
+  const headers = new Headers(response.headers);
+  headers.set('access-control-allow-origin', '*');
+  headers.set('access-control-expose-headers', 'www-authenticate, mcp-session-id');
+  headers.append('vary', 'origin');
+  return new Response(response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+export function createHttpHandler(options: HttpHandlerOptions): HttpHandler {
+  const handler = createMcpHandler(options.createServer, {
+    legacy: 'stateless',
+    onerror: (error) => options.onServerError?.(error),
+  });
+  const { auth } = options;
+  const health = {
+    status: 'ok',
+    name: 'manawg-mcp',
+    version: serverVersion(),
+    transport: 'http',
+    auth: auth.kind,
+    mcpPath: options.path,
+  };
+  const discovery =
+    auth.kind === 'oauth' ? createDiscovery(auth.oauth, auth.fetchImpl ?? fetch) : undefined;
+  const bearerGate =
+    auth.kind === 'oauth'
+      ? requireBearerAuth({
+          verifier: auth.verifier,
+          resourceMetadataUrl: protectedResourceMetadataUrl(auth.oauth),
+        })
+      : undefined;
+  let ready = true;
+
+  async function serveMcp(request: Request): Promise<Response> {
+    if (request.method === 'OPTIONS') {
+      return new Response(null, {
+        status: 204,
+        headers: {
+          'access-control-allow-methods': CORS_ALLOW_METHODS,
+          'access-control-allow-headers': CORS_ALLOW_HEADERS,
+          'access-control-max-age': '600',
+        },
+      });
+    }
+    if (
+      auth.kind === 'api-key' &&
+      !apiKeyMatches(request.headers.get('authorization'), auth.apiKey)
+    ) {
+      return json(401, { error: 'unauthorized' }, false, {
+        'www-authenticate': 'Bearer realm="manawg-mcp"',
+      });
+    }
+    if (bearerGate) {
+      const verified = await bearerGate(request);
+      if (verified instanceof Response) {
+        return verified;
+      }
+      return handler.fetch(request, { authInfo: verified });
+    }
+    return handler.fetch(request);
+  }
+
+  async function route(request: Request): Promise<Response> {
+    const pathname = new URL(request.url).pathname.replace(/\/+$/, '') || '/';
+    const head = request.method === 'HEAD';
+    if (pathname === '/health') {
+      return json(200, health, head);
+    }
+    if (pathname === '/ready') {
+      return json(ready ? 200 : 503, { ready }, head);
+    }
+    if (pathname === options.path) {
+      return serveMcp(request);
+    }
+    const document = await discovery?.(request, pathname);
+    return document ?? json(404, { error: 'not_found' });
+  }
+
+  return {
+    fetch: async (request) => {
+      const response = await route(request);
+      return options.cors ? withCors(response) : response;
+    },
+    setReady: (value) => {
+      ready = value;
+    },
+    close: () => handler.close(),
+  };
+}
+
+export type HttpServerOptions = HttpHandlerOptions & {
+  host: string;
+  port: number;
+  drainMs?: number;
+};
+
+export type RunningHttpServer = {
+  server: Server;
+  url: string;
+  port: number;
+  /** Stops accepting connections and reports `/ready` as 503 for the drain window. */
+  beginShutdown: () => Promise<void>;
+  close: () => Promise<void>;
+};
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
     const timer = setTimeout(resolve, ms);
     timer.unref?.();
   });
-}
-
-function sendJson(res: ServerResponse, status: number, payload: unknown, head = false): void {
-  const body = JSON.stringify(payload);
-  res.writeHead(status, { ...JSON_HEADERS, 'content-length': String(Buffer.byteLength(body)) });
-  res.end(head ? undefined : body);
 }
 
 function toWebRequest(request: IncomingMessage, url: URL): Request {
@@ -87,8 +210,7 @@ async function writeResponse(response: Response, res: ServerResponse): Promise<v
       }
       const { done, value } = await reader.read();
       if (done) break;
-      const chunk = Buffer.from(value);
-      if (!res.write(chunk)) {
+      if (!res.write(Buffer.from(value))) {
         await new Promise<void>((resolve) => res.once('drain', resolve));
       }
     }
@@ -98,79 +220,36 @@ async function writeResponse(response: Response, res: ServerResponse): Promise<v
   }
 }
 
-function apiKeyMatches(header: string | undefined, apiKey: string): boolean {
-  if (!header?.startsWith('Bearer ')) return false;
-  const presented = createHash('sha256').update(header.slice('Bearer '.length)).digest();
-  const expected = createHash('sha256').update(apiKey).digest();
-  return timingSafeEqual(presented, expected);
-}
-
+/** Node listener around {@link createHttpHandler}, with readiness drain on shutdown. */
 export function startHttpServer(options: HttpServerOptions): Promise<RunningHttpServer> {
-  const handler = createMcpHandler(() => options.createServer(), {
-    legacy: 'stateless',
-    onerror: (error) => options.onServerError?.(error),
-  });
-  const health = {
-    status: 'ok',
-    name: 'manawg-mcp',
-    version: serverVersion(),
-    transport: 'http',
-    mcpPath: options.path,
-  };
-
-  let ready = true;
+  const handler = createHttpHandler(options);
   const drainMs = options.drainMs ?? 5_000;
   const server = createServer((request, response) => {
-    void serve(request, response).catch((error: unknown) => {
-      if (!response.headersSent) {
-        sendJson(response, 500, { error: 'internal_error' });
-      } else {
-        response.destroy();
-      }
-      options.onServerError?.(error instanceof Error ? error : new Error(String(error)));
-    });
+    let webRequest: Request;
+    try {
+      const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
+      webRequest = toWebRequest(request, url);
+    } catch {
+      // A malformed Host or request target must not reach an uncaught exception.
+      response.writeHead(400, { 'content-type': 'application/json; charset=utf-8' });
+      response.end(JSON.stringify({ error: 'bad_request' }));
+      return;
+    }
+    void handler
+      .fetch(webRequest)
+      .then((answer) => writeResponse(answer, response))
+      .catch((error: unknown) => {
+        if (!response.headersSent) {
+          response.writeHead(500, { 'content-type': 'application/json; charset=utf-8' });
+          response.end(JSON.stringify({ error: 'internal_error' }));
+        } else {
+          response.destroy();
+        }
+        options.onServerError?.(error instanceof Error ? error : new Error(String(error)));
+      });
   });
   server.headersTimeout = 15_000;
   server.requestTimeout = 60_000;
-
-  async function serve(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
-    const pathname = url.pathname.replace(/\/+$/, '') || '/';
-    if (options.cors) {
-      response.setHeader('access-control-allow-origin', '*');
-      response.setHeader('vary', 'origin');
-    }
-
-    if (pathname === '/health') {
-      sendJson(response, 200, health, request.method === 'HEAD');
-      return;
-    }
-
-    if (pathname === '/ready') {
-      sendJson(response, ready ? 200 : 503, { ready }, request.method === 'HEAD');
-      return;
-    }
-
-    if (pathname === options.path) {
-      if (request.method === 'OPTIONS') {
-        response.setHeader('access-control-allow-methods', CORS_ALLOW_METHODS);
-        response.setHeader('access-control-allow-headers', CORS_ALLOW_HEADERS);
-        response.setHeader('access-control-max-age', '600');
-        response.writeHead(204);
-        response.end();
-        return;
-      }
-      if (options.apiKey && !apiKeyMatches(request.headers.authorization, options.apiKey)) {
-        response.setHeader('www-authenticate', 'Bearer realm="manawg-mcp"');
-        sendJson(response, 401, { error: 'unauthorized' });
-        return;
-      }
-      await writeResponse(await handler.fetch(toWebRequest(request, url)), response);
-      return;
-    }
-
-    sendJson(response, 404, { error: 'not_found' });
-  }
 
   return new Promise<RunningHttpServer>((resolve, reject) => {
     server.once('error', reject);
@@ -183,7 +262,7 @@ export function startHttpServer(options: HttpServerOptions): Promise<RunningHttp
       let shutdown: Promise<void> | undefined;
       const beginShutdown = (): Promise<void> => {
         shutdown ??= (async () => {
-          ready = false;
+          handler.setReady(false);
           if (drainMs > 0) {
             // Still accepting: the readiness probe has to answer 503 first.
             await sleep(drainMs);
@@ -201,9 +280,7 @@ export function startHttpServer(options: HttpServerOptions): Promise<RunningHttp
         port,
         url: `http://${displayHost}:${port}${options.path}`,
         beginShutdown,
-        close: async () => {
-          await beginShutdown();
-        },
+        close: beginShutdown,
       });
     });
   });

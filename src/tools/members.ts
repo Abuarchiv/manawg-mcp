@@ -78,7 +78,7 @@ export const memberTools = [
     name: 'wg_update',
     title: 'Change flat settings (admin)',
     description:
-      'name 1..100, joiningEnabled turns joining on or off, rotateShareCode true creates a NEW 8-character join code and turns joining on. The old code stops working, and MANAWG_WG_CODE of this server must then be set to the new code, otherwise every further call answers wg_not_found. Admins only (not_admin), at least one field.',
+      'name 1..100, joiningEnabled turns joining on or off, rotateShareCode true creates a NEW 8-character join code and turns joining on. The old code stops working: pass the new code as wgCode from then on (and update MANAWG_WG_CODE if it is set), otherwise calls answer wg_not_found. Admins only (not_admin), at least one field.',
     method: 'PATCH',
     gate: 'destructive',
     input: z.strictObject({

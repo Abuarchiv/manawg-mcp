@@ -1,6 +1,13 @@
 import { afterEach, expect, it } from 'vitest';
 import { TOOL_DEFS } from '../src/tools/registry.js';
-import { type Harness, MEMBER_A, MEMBER_B, startHarness } from './helpers/app.js';
+import {
+  type Harness,
+  MEMBER_A,
+  MEMBER_B,
+  SECOND_WG_CODE,
+  startHarness,
+  WG_CODE,
+} from './helpers/app.js';
 
 // Whole-system regression flows: real session controller + HTTP client + MCP server against a
 // stateful stub of the ManaWG app (see helpers/app.ts).
@@ -235,5 +242,45 @@ it('serves entity resources by id and refuses malformed ids before any request',
   expect(h.app.seen.length).toBe(before);
 
   await h.client.readResource({ uri: `manawg://current/event/${MEMBER_A}` });
-  expect(h.app.seen.at(-1)?.path).toBe(`/api/wg/WG123/events/${MEMBER_A}`);
+  expect(h.app.seen.at(-1)?.path).toBe(`/api/wg/${WG_CODE}/events/${MEMBER_A}`);
+});
+
+it('works in the only flat of the account without any configured code', async () => {
+  const h = await harness({ defaultWgCode: null, credentials: 'bearer' });
+
+  await h.call('shopping_list');
+  await h.call('chores_list');
+
+  // One lookup of the account's flats, then straight to the flat.
+  expect(h.app.seen.map((entry) => entry.path)).toEqual([
+    '/api/wg/mine',
+    `/api/wg/${WG_CODE}/shopping`,
+    `/api/wg/${WG_CODE}/chores`,
+  ]);
+});
+
+it('stops guessing the flat once the account created a second one', async () => {
+  const h = await harness({ defaultWgCode: null });
+
+  await h.call('shopping_list');
+  await h.call('wg_create', { name: 'Zweite WG', creatorName: 'Ada' });
+
+  expect(await h.callError('shopping_list')).toContain('wg_code_required');
+});
+
+it('asks for wgCode when the account has several flats, then serves each flat it names', async () => {
+  const h = await harness({ defaultWgCode: null, wgs: [WG_CODE, SECOND_WG_CODE] });
+
+  expect(await h.callError('shopping_list')).toBe(
+    'ManaWG request failed: wg_code_required (the account belongs to several flats: call wg_list and pass wgCode)',
+  );
+
+  await h.call('shopping_list', { wgCode: SECOND_WG_CODE.toLowerCase() });
+  await h.call('shopping_add', { wgCode: WG_CODE, name: 'Milch' });
+
+  expect(h.app.seen.slice(-2).map((entry) => [entry.path, entry.body])).toEqual([
+    [`/api/wg/${SECOND_WG_CODE}/shopping`, undefined],
+    [`/api/wg/${WG_CODE}/shopping`, { name: 'Milch', bought: false }],
+  ]);
+  expect(await h.callError('shopping_list', { wgCode: 'nope' })).toContain('wgCode');
 });
