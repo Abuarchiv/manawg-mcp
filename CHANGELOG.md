@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1 (2026-11-04)
+
+### Changed
+
+- Release images are built for `linux/amd64` and `linux/arm64`; 0.2.0 was amd64 only.
+
 ## 0.2.0 (2026-11-04)
 
 ### Added
