@@ -24,7 +24,7 @@ export function serverFactory(
     const client = createManaWgClient(
       config,
       fetchImpl,
-      sessionCredentials(createSessionController(config.auth, fetchImpl)),
+      sessionCredentials(createSessionController(config.auth, fetchImpl, config.timeoutMs)),
     );
     return () => buildServer(client, options);
   }

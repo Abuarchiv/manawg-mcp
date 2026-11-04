@@ -2,7 +2,7 @@
 
 FROM node:22-alpine AS build
 WORKDIR /app
-RUN npm install -g corepack@latest --no-audit --no-fund && corepack enable
+RUN npm install -g corepack@0.36.0 --no-audit --no-fund && corepack enable
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
 COPY tsconfig.json tsconfig.build.json ./

@@ -65,6 +65,8 @@ export type StubApp = {
     reactions: string[];
     /** Share codes `/api/wg/mine` lists; every listed flat is served. */
     wgs: string[];
+    /** Split ids the settlement preview reports as `offset` (a counter-debt that is netted). */
+    offsetSplits: string[];
   };
   close: () => Promise<void>;
 };
@@ -115,6 +117,7 @@ export async function startStubApp(): Promise<StubApp> {
     expenses: [],
     reactions: [],
     wgs: [WG_CODE],
+    offsetSplits: [],
   };
   const seen: Seen[] = [];
   let tokens = 0;
@@ -283,7 +286,11 @@ export async function startStubApp(): Promise<StubApp> {
       }
       if (id === 'settle-batch') {
         const open = state.expenses.flatMap((expense) => expense.splits);
-        const total = open.reduce((sum, split) => sum + Number(split.amountCents), 0);
+        const isOffset = (split: Json) => state.offsetSplits.includes(String(split.id));
+        const total = open.reduce(
+          (sum, split) => sum + (isOffset(split) ? -1 : 1) * Number(split.amountCents),
+          0,
+        );
         if (method === 'GET') {
           return reply(res, 200, {
             currency: 'EUR',
@@ -294,18 +301,26 @@ export async function startStubApp(): Promise<StubApp> {
               id: split.id,
               expenseId: 'e',
               amountCents: split.amountCents,
+              offset: isOffset(split),
             })),
           });
         }
-        // The real route validates `expected` with a strict schema: unknown keys are a 400.
-        const expected = input.expected;
+        // The real route validates `expected` with a strict schema: unknown keys are a 400, and
+        // the offset flags must add up to settleableCents.
+        const expected = input.expected as Json;
+        const expectedSplits = (expected?.splits ?? []) as Json[];
         if (
           !hasOnly(expected, ['currency', 'netCents', 'settleableCents', 'splits']) ||
-          !((expected as Json).splits as Json[]).every((split) =>
-            hasOnly(split, ['id', 'amountCents']),
-          )
+          !expectedSplits.every((split) => hasOnly(split, ['id', 'amountCents', 'offset']))
         ) {
           return fail(res, 400, 'settlement_review_invalid');
+        }
+        const expectedTotal = expectedSplits.reduce(
+          (sum, split) => sum + (split.offset ? -1 : 1) * Number(split.amountCents),
+          0,
+        );
+        if (expectedTotal !== total || expected.settleableCents !== total) {
+          return fail(res, 409, 'settlement_changed');
         }
         for (const split of open) split.settled = true;
         return reply(res, 200, { settled: open.length });

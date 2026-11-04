@@ -32,6 +32,7 @@ export const SAFE_UPSTREAM_CODES = new Set([
   'before_invalid',
   'body_invalid',
   'bought_invalid',
+  'busy_retry',
   'calendar_feed_not_found',
   'calendar_subscription_not_found',
   'category_invalid',

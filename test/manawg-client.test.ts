@@ -159,6 +159,20 @@ it('retries reads on a transient status and fails after the attempts', async () 
   expect(fetchMock).toHaveBeenCalledTimes(3);
 });
 
+it('surfaces a 503 busy_retry from the app as busy_retry with its retry hint', async () => {
+  const fetchMock = vi.fn<typeof fetch>().mockImplementation(async () =>
+    jsonResponse({ error: 'service_unavailable', code: 'busy_retry' }, 503, {
+      'retry-after': '2',
+    }),
+  );
+  const client = createManaWgClient(validConfig, fetchMock, undefined, { retryDelaysMs: [1, 1] });
+
+  const thrown = await client.call({ path: ['dashboard'] }).catch((error: unknown) => error);
+
+  expect(thrown).toBeInstanceOf(ManaWgError);
+  expect((thrown as ManaWgError).code).toBe('busy_retry');
+});
+
 it('retries a read after a network failure and then succeeds', async () => {
   const fetchMock = vi
     .fn<typeof fetch>()

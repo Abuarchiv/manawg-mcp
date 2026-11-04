@@ -15,16 +15,21 @@ const eventRecurrence = z
   );
 const reason = z.string().trim().max(120).nullable().optional();
 
+/** The app parses a bare date as midnight UTC, which would drop events later that day. */
+function endOfBareDate(value: string): string {
+  return /^\d{4}-\d{2}-\d{2}$/.test(value) ? `${value}T23:59:59.999Z` : value;
+}
+
 export const calendarTools = [
   defineTool({
     name: 'events_list',
     title: 'Read calendar events',
     description:
-      'Flat events in the window from..to (a date or ISO with offset; the filter applies only when both are set). Too many matches (>1000) give 503 events_window_too_large; then narrow the window.',
+      'Flat events in the window from..to (a date or ISO with offset; the filter applies only when both are set). A bare-date to (YYYY-MM-DD) includes that whole day (sent as 23:59:59.999 UTC). Too many matches (>1000) give 503 events_window_too_large; then narrow the window.',
     method: 'GET',
     input: z.strictObject({ from: when.optional(), to: when.optional() }),
     path: () => ['events'],
-    query: (input) => ({ from: input.from, to: input.to }),
+    query: (input) => ({ from: input.from, to: input.to && endOfBareDate(input.to) }),
   }),
   defineTool({
     name: 'event_get',

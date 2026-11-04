@@ -5,8 +5,8 @@ import { defineTool } from './types.js';
 const units = z.enum(['piece', 'litre', 'kilogram', 'roll', 'pack']);
 const categories = z.enum(['bathroom', 'kitchen', 'cleaning', 'other']);
 const itemName = z.string().trim().min(1).max(120);
-const quantity = z.number().int().min(0).max(9999);
-const threshold = z.number().int().min(0).max(9999);
+const quantity = z.number().multipleOf(0.01).min(0).max(9999);
+const threshold = z.number().multipleOf(0.01).min(0).max(9999);
 
 export const inventoryTools = [
   defineTool({
@@ -22,7 +22,7 @@ export const inventoryTools = [
     name: 'inventory_add',
     title: 'Add a supply item',
     description:
-      'name 1..120; quantity 0..9999 (default 0), unit piece|litre|kilogram|roll|pack, threshold 0..9999 (default 1), category bathroom|kitchen|cleaning|other (default other).',
+      'name 1..120; quantity 0..9999 in steps of 0.01 (default 0), unit piece|litre|kilogram|roll|pack, threshold 0..9999 in steps of 0.01 (default 1), category bathroom|kitchen|cleaning|other (default other).',
     method: 'POST',
     input: z.strictObject({
       name: itemName,
@@ -38,12 +38,12 @@ export const inventoryTools = [
     name: 'inventory_update',
     title: 'Edit a supply item',
     description:
-      'quantityDelta (-9999..9999) counts up or down, quantity sets an absolute value (then expectedQuantity and expectedUpdatedAt are required). On 409 version_conflict read again. At least one field is needed (empty_update).',
+      'quantityDelta (-9999..9999, steps of 0.01) counts up or down, quantity sets an absolute value (then expectedQuantity and expectedUpdatedAt are required). On 409 version_conflict read again. At least one field is needed (empty_update).',
     method: 'PATCH',
     input: z.strictObject({
       id: uuid,
       name: itemName.optional(),
-      quantityDelta: z.number().int().min(-9999).max(9999).optional(),
+      quantityDelta: z.number().multipleOf(0.01).min(-9999).max(9999).optional(),
       quantity: quantity.optional(),
       expectedQuantity: quantity.optional(),
       expectedUpdatedAt: z.iso.datetime({ offset: true }).optional(),

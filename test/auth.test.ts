@@ -285,3 +285,24 @@ it('ignores invalidate while a sign-in is already in flight', async () => {
   expect(headers[0]).toBe(headers[1]);
   expect(existsSync(path)).toBe(true);
 });
+
+/** A fetch that never answers on its own and rejects once its signal aborts, like the real one. */
+function hangingFetch(init: RequestInit | undefined): Promise<Response> {
+  return new Promise((_resolve, reject) => {
+    init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
+  });
+}
+
+it('gives up on a hung token request and retries on the next call', async () => {
+  fetchMock.mockImplementationOnce((_url, init) => hangingFetch(init));
+  fetchMock.mockImplementation(async () => grantResponse(freshSession()));
+  const controller = createSessionController(authConfig(), fetchMock, 50);
+
+  const first = await controller
+    .cookieHeader()
+    .catch((error: unknown) => (error instanceof Error ? error.message : ''));
+  expect(first).toBe('auth_failed');
+
+  await expect(controller.cookieHeader()).resolves.toContain(KEY);
+  expect(fetchMock).toHaveBeenCalledTimes(2);
+});

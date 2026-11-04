@@ -180,7 +180,7 @@ function allowDestructive(env: NodeJS.ProcessEnv): boolean {
   return value !== undefined && TRUTHY_VALUES.has(value);
 }
 
-function isLoopbackHost(host: string): boolean {
+export function isLoopbackHost(host: string): boolean {
   const bare = host.replace(/^\[|\]$/g, '');
   const version = isIP(bare);
   return (
