@@ -24,7 +24,7 @@ pnpm build
 ```
 
 Tests, lint and typecheck need no credentials. `pnpm live-check` talks to a real ManaWG instance and
-needs the env file described in the [README](README.md#setup).
+needs the env file described in the [self-hosting guide](docs/self-hosting.md#local-setup).
 
 ## Rules for changes
 
