@@ -1,4 +1,7 @@
+import { request as httpRequest } from 'node:http';
+import { McpServer } from '@modelcontextprotocol/server';
 import { afterEach, expect, it, vi } from 'vitest';
+import { z } from 'zod';
 import { type HttpServerOptions, type RunningHttpServer, startHttpServer } from '../src/http.js';
 import type { ManaWgClient } from '../src/manawg-client.js';
 import { buildServer } from '../src/server.js';
@@ -165,3 +168,126 @@ it('adds CORS headers only when enabled', async () => {
   const plain = await fetch(`${originOf(withoutCors)}/health`);
   expect(plain.headers.get('access-control-allow-origin')).toBeNull();
 });
+
+function rawRequest(
+  running: RunningHttpServer,
+  headers: Record<string, string>,
+  method = 'POST',
+): Promise<{ status: number }> {
+  return new Promise((resolve, reject) => {
+    const request = httpRequest(
+      { host: '127.0.0.1', port: running.port, path: '/mcp', method, headers },
+      (response) => {
+        response.resume();
+        response.once('end', () => resolve({ status: response.statusCode ?? 0 }));
+      },
+    );
+    request.once('error', reject);
+    request.end(method === 'POST' ? JSON.stringify(INITIALIZE) : undefined);
+  });
+}
+
+const MCP_HEADERS = {
+  'content-type': 'application/json',
+  accept: 'application/json, text/event-stream',
+};
+
+it('rejects a foreign Host or Origin on a loopback bind (DNS rebinding)', async () => {
+  const running = await startHttp();
+
+  const rebound = await rawRequest(running, { ...MCP_HEADERS, host: 'evil.example' });
+  expect(rebound.status).toBeGreaterThanOrEqual(400);
+  expect(rebound.status).toBeLessThan(500);
+
+  const rebindWithPort = await rawRequest(running, {
+    ...MCP_HEADERS,
+    host: `evil.example:${running.port}`,
+  });
+  expect(rebindWithPort.status).toBeGreaterThanOrEqual(400);
+
+  const foreignOrigin = await rawRequest(running, {
+    ...MCP_HEADERS,
+    host: `127.0.0.1:${running.port}`,
+    origin: 'https://evil.example',
+  });
+  expect(foreignOrigin.status).toBe(403);
+
+  const local = await rawRequest(running, { ...MCP_HEADERS, host: `127.0.0.1:${running.port}` });
+  expect(local.status).toBe(200);
+
+  const localhost = await rawRequest(running, {
+    ...MCP_HEADERS,
+    host: `localhost:${running.port}`,
+    origin: `http://localhost:${running.port}`,
+  });
+  expect(localhost.status).toBe(200);
+});
+
+it('keeps the Host check on a loopback bind when CORS is on and lets cross-origin browsers in', async () => {
+  const cors = await startHttp({ cors: true });
+  const foreignHost = await rawRequest(cors, { ...MCP_HEADERS, host: 'evil.example' });
+  expect(foreignHost.status).toBeGreaterThanOrEqual(400);
+  const foreignOrigin = await rawRequest(cors, {
+    ...MCP_HEADERS,
+    host: `127.0.0.1:${cors.port}`,
+    origin: 'https://inspector.example',
+  });
+  expect(foreignOrigin.status).toBe(200);
+});
+
+it('aborts the request signal when the client disconnects', async () => {
+  let aborted: () => void = () => undefined;
+  const signalAborted = new Promise<void>((resolve) => {
+    aborted = resolve;
+  });
+  let entered: () => void = () => undefined;
+  const toolEntered = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const running = await startHttp({
+    createServer: () => {
+      const server = new McpServer({ name: 'hang', version: '0.0.0' });
+      server.registerTool('hang', { inputSchema: z.object({}) }, async (_args, ctx) => {
+        entered();
+        await new Promise<void>((resolve) => {
+          ctx.mcpReq.signal.addEventListener('abort', () => resolve(), { once: true });
+        });
+        aborted();
+        return { content: [{ type: 'text', text: 'done' }] };
+      });
+      return server;
+    },
+  });
+
+  const request = httpRequest({
+    host: '127.0.0.1',
+    port: running.port,
+    path: '/mcp',
+    method: 'POST',
+    headers: MCP_HEADERS,
+  });
+  request.on('error', () => undefined);
+  request.end(
+    JSON.stringify({
+      jsonrpc: '2.0',
+      id: 7,
+      method: 'tools/call',
+      params: { name: 'hang', arguments: {} },
+    }),
+  );
+  await toolEntered;
+  request.destroy();
+
+  await expect(
+    Promise.race([
+      signalAborted,
+      sleepMs(3_000).then(() => {
+        throw new Error('signal did not abort');
+      }),
+    ]),
+  ).resolves.toBeUndefined();
+});
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}

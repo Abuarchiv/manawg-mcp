@@ -2,11 +2,15 @@ import { createHash, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import {
   createMcpHandler,
+  hostHeaderValidationResponse,
+  localhostAllowedHostnames,
+  localhostAllowedOrigins,
   type McpServerFactory,
   type OAuthTokenVerifier,
+  originValidationResponse,
   requireBearerAuth,
 } from '@modelcontextprotocol/server';
-import type { OAuthConfig } from './config.js';
+import { isLoopbackHost, type OAuthConfig } from './config.js';
 import { createDiscovery, protectedResourceMetadataUrl } from './oauth.js';
 import { serverVersion } from './version.js';
 
@@ -20,6 +24,11 @@ export type HttpHandlerOptions = {
   path: string;
   auth: HttpAuth;
   cors?: boolean;
+  /**
+   * Accept only loopback Host (and, without CORS, Origin) values, so a web page cannot reach a
+   * local server through DNS rebinding.
+   */
+  localOnly?: boolean;
   createServer: McpServerFactory;
   onServerError?: (error: Error) => void;
 };
@@ -92,6 +101,15 @@ export function createHttpHandler(options: HttpHandlerOptions): HttpHandler {
   let ready = true;
 
   async function serveMcp(request: Request): Promise<Response> {
+    if (options.localOnly) {
+      // With CORS on, the operator allows browser pages from any origin; the Host check stays.
+      const rejected =
+        hostHeaderValidationResponse(request, localhostAllowedHostnames()) ??
+        (options.cors ? undefined : originValidationResponse(request, localhostAllowedOrigins()));
+      if (rejected) {
+        return rejected;
+      }
+    }
     if (request.method === 'OPTIONS') {
       return new Response(null, {
         status: 204,
@@ -170,7 +188,7 @@ function sleep(ms: number): Promise<void> {
   });
 }
 
-function toWebRequest(request: IncomingMessage, url: URL): Request {
+function toWebRequest(request: IncomingMessage, response: ServerResponse, url: URL): Request {
   const method = request.method ?? 'GET';
   const headers = new Headers();
   for (const [name, value] of Object.entries(request.headers)) {
@@ -181,12 +199,32 @@ function toWebRequest(request: IncomingMessage, url: URL): Request {
       headers.set(name, value);
     }
   }
-  const init: RequestInit & { duplex?: 'half' } = { method, headers };
+  // The response closes when the client goes away; the request closes once its body is read.
+  const disconnected = new AbortController();
+  response.once('close', () => disconnected.abort());
+  const init: RequestInit & { duplex?: 'half' } = { method, headers, signal: disconnected.signal };
   if (method !== 'GET' && method !== 'HEAD') {
     init.body = request as unknown as BodyInit;
     init.duplex = 'half';
   }
   return new Request(url, init);
+}
+
+/** Resolves when the socket can take more data, or when it is gone. */
+function drained(res: ServerResponse): Promise<void> {
+  return new Promise((resolve) => {
+    if (res.destroyed) {
+      resolve();
+      return;
+    }
+    const done = () => {
+      res.off('drain', done);
+      res.off('close', done);
+      resolve();
+    };
+    res.once('drain', done);
+    res.once('close', done);
+  });
 }
 
 async function writeResponse(response: Response, res: ServerResponse): Promise<void> {
@@ -211,7 +249,7 @@ async function writeResponse(response: Response, res: ServerResponse): Promise<v
       const { done, value } = await reader.read();
       if (done) break;
       if (!res.write(Buffer.from(value))) {
-        await new Promise<void>((resolve) => res.once('drain', resolve));
+        await drained(res);
       }
     }
     res.end();
@@ -222,13 +260,16 @@ async function writeResponse(response: Response, res: ServerResponse): Promise<v
 
 /** Node listener around {@link createHttpHandler}, with readiness drain on shutdown. */
 export function startHttpServer(options: HttpServerOptions): Promise<RunningHttpServer> {
-  const handler = createHttpHandler(options);
+  const handler = createHttpHandler({
+    ...options,
+    localOnly: options.localOnly ?? (options.auth.kind !== 'oauth' && isLoopbackHost(options.host)),
+  });
   const drainMs = options.drainMs ?? 5_000;
   const server = createServer((request, response) => {
     let webRequest: Request;
     try {
       const url = new URL(request.url ?? '/', `http://${request.headers.host ?? 'localhost'}`);
-      webRequest = toWebRequest(request, url);
+      webRequest = toWebRequest(request, response, url);
     } catch {
       // A malformed Host or request target must not reach an uncaught exception.
       response.writeHead(400, { 'content-type': 'application/json; charset=utf-8' });
