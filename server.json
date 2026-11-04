@@ -3,7 +3,7 @@
   "name": "com.manawg/mcp",
   "title": "ManaWG",
   "description": "Shared-flat app ManaWG: expenses, cleaning rota, shopping list, calendar and chat for agents.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "websiteUrl": "https://manawg.com",
   "repository": { "url": "https://github.com/Abuarchiv/manawg-mcp", "source": "github" },
   "remotes": [{ "type": "streamable-http", "url": "https://mcp.manawg.com/mcp" }]

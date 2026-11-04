@@ -1,6 +1,6 @@
 {
   "name": "manawg-mcp",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "private": true,
   "description": "MCP server for ManaWG, the free, open-source app for shared flats: expenses, cleaning rota, shopping list, calendar and chat as tools for AI assistants",
   "license": "Apache-2.0",
