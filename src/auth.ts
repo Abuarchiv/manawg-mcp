@@ -4,6 +4,9 @@ import type { SupabaseAuthConfig } from './config.js';
 
 export const MAX_CHUNK_SIZE = 3180;
 
+/** Upper bound for one Supabase token call; a hung call must not block every later one. */
+const DEFAULT_AUTH_TIMEOUT_MS = 10_000;
+
 /**
  * Mirrors `@supabase/ssr` (0.12.5): sessions are stored as
  * `base64-<base64url(JSON)>`, chunked after MAX_CHUNK_SIZE. Readers accept
@@ -186,6 +189,7 @@ function sessionAfterSetCookies(
 export function createSessionController(
   authConfig: SupabaseAuthConfig,
   fetchImpl: FetchLike = fetch,
+  timeoutMs = DEFAULT_AUTH_TIMEOUT_MS,
 ): SessionController {
   const key = storageKeyFor(authConfig.url);
   let session: SupabaseSession | undefined;
@@ -234,6 +238,7 @@ export function createSessionController(
             'content-type': 'application/json',
           },
           body: JSON.stringify(body),
+          signal: AbortSignal.timeout(timeoutMs),
         },
       );
     } catch {
