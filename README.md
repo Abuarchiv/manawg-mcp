@@ -1,18 +1,43 @@
 # manawg-mcp
 
-MCP server for a [ManaWG](https://github.com/Abuarchiv/manawg) household. Node 22, stdio or
-streamable HTTP transport, 74 tools, 13 resources, 4 resource templates and 4 prompts over the
-same HTTP API the web app uses.
+[![CI](https://github.com/Abuarchiv/manawg-mcp/actions/workflows/ci.yml/badge.svg)](https://github.com/Abuarchiv/manawg-mcp/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![MCP Registry](https://img.shields.io/badge/MCP_Registry-com.manawg%2Fmcp-black)](https://registry.modelcontextprotocol.io/v0/servers?search=com.manawg/mcp)
 
-It runs in two auth modes:
+MCP server for [ManaWG](https://manawg.com), the free, open-source app for shared flats. It gives
+AI assistants the flat's expenses, balances, cleaning rota, shopping list, pantry, noticeboard,
+chat and calendar: 74 tools, 13 resources, 4 resource templates and 4 prompts over the same HTTP
+API the [web app](https://github.com/Abuarchiv/manawg) uses.
+
+## Connect an agent
+
+The hosted server runs at `https://mcp.manawg.com/mcp`. Add it as a remote MCP server; the client
+opens the browser, you sign in to ManaWG and allow the assistant. There is no key to copy.
+
+| Client | How |
+| --- | --- |
+| Claude Code | `claude mcp add --transport http manawg https://mcp.manawg.com/mcp` |
+| Claude (web, desktop) | Settings → Connectors → Add custom connector, URL `https://mcp.manawg.com/mcp` |
+| ChatGPT | Settings → Apps & Connectors → Advanced settings → Developer mode, then Create with the URL `https://mcp.manawg.com/mcp` and OAuth |
+| Cursor, VS Code, others | Add a streamable HTTP server with the URL `https://mcp.manawg.com/mcp` |
+
+The assistant then acts as your account in all your flats, with the same rights you have in the
+app. It cannot delete a flat or change your account, and the hosted server does not register the
+16 destructive tools. Connected assistants are listed in the app under Settings → Access, where
+you can disconnect each one.
+
+## Run it yourself
+
+The server runs in two auth modes:
 
 - **session** (default): the server signs in one ManaWG account itself. For a local agent over
   stdio, or a private HTTP deployment behind an API key.
-- **oauth**: the server is an OAuth 2.1 resource server for many users. Each user connects their
-  agent with the server URL and signs in to ManaWG in the browser; no secrets are copied by hand.
-  See [Hosted with OAuth](#hosted-with-oauth).
+- **oauth**: the server is an OAuth 2.1 resource server for many users, the mode behind
+  `mcp.manawg.com`. See [Hosted with OAuth](#hosted-with-oauth).
 
-## Setup
+You need Node.js 22 and pnpm 9.
+
+### Setup
 
 1. Install and build.
 
@@ -36,6 +61,21 @@ It runs in two auth modes:
    ```
 
 Unit tests, lint and typecheck never need credentials.
+
+### Start
+
+Load the env file and run the server, or register it in your MCP host:
+
+```bash
+set -a; source ~/.config/manawg-mcp/env; set +a
+node dist/index.js
+```
+
+Claude Code:
+
+```bash
+claude mcp add manawg --env-file ~/.config/manawg-mcp/env -- node "$(pwd)/dist/index.js"
+```
 
 ## Environment
 
@@ -107,8 +147,10 @@ authorization server:
    the server.
 
 Prerequisites on the app side, without which every call answers `auth_required`: the OAuth server
-enabled in the Supabase project, a consent page at the authorization path configured there, and an
-auth guard that accepts `Authorization: Bearer` (the app currently reads only its session cookie).
+enabled in the Supabase project, with dynamic client registration and the app's consent page
+(`/oauth/consent`) as authorization path, and an app version that accepts `Authorization: Bearer`
+on `/api/wg/*` (ManaWG does since November 2026; it refuses bearer tokens for deleting a flat and
+for every account and auth route).
 
 Limits worth knowing:
 
@@ -122,21 +164,6 @@ Limits worth knowing:
   `GET /api/wg/mine`.
 - Browser clients (MCP Inspector) also need `MANAWG_HTTP_CORS=1`.
 - A JWKS that cannot be loaded answers `500 server_error`, not `401`, so clients keep their token.
-
-## Host start
-
-Load the env file and run the server, or register it in your MCP host:
-
-```bash
-set -a; source ~/.config/manawg-mcp/env; set +a
-node dist/index.js
-```
-
-Claude Code:
-
-```bash
-claude mcp add manawg --env-file ~/.config/manawg-mcp/env -- node "$(pwd)/dist/index.js"
-```
 
 ## Deployment
 
