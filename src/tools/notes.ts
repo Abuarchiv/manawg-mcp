@@ -12,7 +12,7 @@ export const noteTools = [
     name: 'notes_list',
     title: 'Read the noticeboard',
     description:
-      'Posts with reactionCounts, myReactions, takers and comments (pinned first). status open|resolved, kind info|question|problem|request|decision.',
+      'Lists the flat noticeboard: member-written posts, pinned first, then newest first (max 300). Each post carries kind, status, updatedAt, reactionCounts, myReactions, takers (members who reacted with take) and its comments. Finished posts (resolved, or info/decision) drop off the board 30 days after their last activity unless pinned; open questions, problems and requests stay. Use this to find post ids and updatedAt for note_update; use note_comments to read the comments of one post by id.',
     method: 'GET',
     input: z.strictObject({}),
     path: () => ['announcements'],
@@ -21,21 +21,27 @@ export const noteTools = [
     name: 'note_comments',
     title: 'Read the comments on a post',
     description:
-      'All comments on a post (max 500), oldest first, with authorName, authorColor and createdAt. 404 announcement_not_found for an unknown id.',
+      'Reads the comments of one noticeboard post, oldest first (max 500), each with id, memberId, content, createdAt, authorName and authorColor. Use it when you only need one post; notes_list already embeds comments for all posts. Returns 404 announcement_not_found for an unknown post id.',
     method: 'GET',
-    input: z.strictObject({ id: uuid }),
+    input: z.strictObject({ id: uuid.describe('Id of the post, from notes_list.') }),
     path: (input) => ['announcements', input.id, 'comments'],
   }),
   defineTool({
     name: 'note_create',
     title: 'Write a post',
     description:
-      'content 1..2000, kind default info. imageUrl must be an upload URL issued by the app (otherwise image_invalid; deleted uploads give image_removed). The answer carries warning when the push notification could not be confirmed.',
+      'Posts a new message to the flat noticeboard as the signed-in member and sends a push notification to the other members. Use it for announcements, questions or requests to the whole flat; to reply on an existing post use note_comment, and for the live conversation use chat_send. The answer holds the created announcement and a warning when the push delivery could not be confirmed. An imageUrl that is not an app-issued upload of this flat fails with image_invalid; an upload that was deleted fails with image_removed.',
     method: 'POST',
     input: z.strictObject({
-      content,
-      kind: noteKind.default('info'),
-      imageUrl,
+      content: content.describe('Text of the post, shown as written on the noticeboard.'),
+      kind: noteKind
+        .default('info')
+        .describe(
+          'Type of the post. info and decision are finished posts that fade from the board; question, problem and request stay on the board until resolved. Defaults to info.',
+        ),
+      imageUrl: imageUrl.describe(
+        'Optional image attached to the post. Must be the URL of an image already uploaded to this flat through the ManaWG app; arbitrary URLs are rejected. Omit for a text-only post.',
+      ),
     }),
     path: () => ['announcements'],
     body: (input) => input,
@@ -44,15 +50,29 @@ export const noteTools = [
     name: 'note_update',
     title: 'Change a post',
     description:
-      'content (1..2000, manual posts only, otherwise content_locked), pinned or kind only by the author or an admin (not_owner). status open|resolved only by the author or members with their own take reaction; an admin without take also gets status_change_not_allowed. expectedUpdatedAt (updatedAt from notes_list) guards against concurrent edits: 409 announcement_changed means read again and decide.',
+      'Edits an existing noticeboard post: resolve or reopen it, pin or unpin it, change its kind, or rewrite its text. Send only the fields you want to change. content, pinned and kind may only be changed by the post author or an admin (otherwise 403 not_owner); content only on manually written posts (otherwise 403 content_locked). status may only be changed by the author, an admin, or a member who has set a take reaction on the post (otherwise 403 status_change_not_allowed). Resolving a post pushes a notification to the author and the takers. Pass expectedUpdatedAt to guard against concurrent edits: if the post changed meanwhile the call fails with 409 announcement_changed, so read notes_list again before retrying. To remove a post use note_delete; to take it on use note_react.',
     method: 'PATCH',
     input: z.strictObject({
-      id: uuid,
-      status: z.enum(['open', 'resolved']).optional(),
-      pinned: z.boolean().optional(),
-      kind: noteKind.optional(),
-      content: content.optional(),
-      expectedUpdatedAt: isoDateTime.optional(),
+      id: uuid.describe('Id of the post to change, from notes_list.'),
+      status: z
+        .enum(['open', 'resolved'])
+        .optional()
+        .describe('Set resolved to close the post or open to reopen it. Omit to leave unchanged.'),
+      pinned: z
+        .boolean()
+        .optional()
+        .describe(
+          'true pins the post to the top of the board, false unpins it. Omit to leave unchanged.',
+        ),
+      kind: noteKind.optional().describe('New type of the post. Omit to leave unchanged.'),
+      content: content
+        .optional()
+        .describe('New text, replacing the old text completely. Omit to leave unchanged.'),
+      expectedUpdatedAt: isoDateTime
+        .optional()
+        .describe(
+          'The updatedAt of this post as last read from notes_list (ISO 8601 with offset). If the post changed since, the update is rejected with announcement_changed. Omit to skip the check.',
+        ),
     }),
     path: (input) => ['announcements', input.id],
     body: (input) => {
@@ -63,50 +83,70 @@ export const noteTools = [
   defineTool({
     name: 'note_delete',
     title: 'Delete a post',
-    description: 'Deletes the post with its comments. Allowed for the author or an admin.',
+    description:
+      'Permanently deletes a noticeboard post together with its comments and reactions; this cannot be undone. Only the post author or an admin may do it (otherwise 403 not_owner), and nobody is notified. To close a post but keep it visible use note_update with status resolved instead; to remove only one comment use note_comment_delete.',
     method: 'DELETE',
     gate: 'destructive',
-    input: z.strictObject({ id: uuid }),
+    input: z.strictObject({ id: uuid.describe('Id of the post to delete, from notes_list.') }),
     path: (input) => ['announcements', input.id],
   }),
   defineTool({
     name: 'note_comment',
     title: 'Write a comment',
     description:
-      'Comment on a post, content 1..600. Answer: comment (with authorName, authorColor) and warning.',
+      'Adds a comment to an existing noticeboard post as the signed-in member and pushes a notification to the post author and the takers (not to you). Use it to reply on a post; to start a new topic use note_create, and for the live conversation use chat_send. The answer holds the created comment (with its id, authorName and authorColor) and a warning when the push delivery could not be confirmed. Returns 404 announcement_not_found for an unknown post.',
     method: 'POST',
-    input: z.strictObject({ id: uuid, content: commentContent }),
+    input: z.strictObject({
+      id: uuid.describe('Id of the post to comment on, from notes_list.'),
+      content: commentContent.describe('Text of the comment.'),
+    }),
     path: (input) => ['announcements', input.id, 'comments'],
     body: (input) => ({ content: input.content }),
   }),
   defineTool({
     name: 'note_comment_update',
     title: 'Edit your own comment',
-    description: 'Only the author of the comment (not_owner), content still 1..600.',
+    description:
+      'Replaces the text of one of your own comments on a noticeboard post; nobody is notified. Only the comment author may edit it, not even an admin (403 not_owner); an unknown comment returns 404 comment_not_found. To remove a comment use note_comment_delete; to add a new one use note_comment.',
     method: 'PATCH',
-    input: z.strictObject({ id: uuid, commentId: uuid, content: commentContent }),
+    input: z.strictObject({
+      id: uuid.describe('Id of the post the comment belongs to, from notes_list.'),
+      commentId: uuid.describe('Id of the comment to edit, from note_comments or notes_list.'),
+      content: commentContent.describe('New text, replacing the old text completely.'),
+    }),
     path: (input) => ['announcements', input.id, 'comments', input.commentId],
     body: (input) => ({ content: input.content }),
   }),
   defineTool({
     name: 'note_comment_delete',
     title: 'Delete your own comment',
-    description: 'Removes the comment for good; only its author may do this.',
+    description:
+      'Permanently deletes one comment from a noticeboard post; this cannot be undone. The comment author may delete it, and so may an admin as moderation (otherwise 403 not_owner); nobody is notified. An unknown comment returns 404 comment_not_found. To delete the whole post use note_delete; to change the text instead use note_comment_update.',
     method: 'DELETE',
     gate: 'destructive',
-    input: z.strictObject({ id: uuid, commentId: uuid }),
+    input: z.strictObject({
+      id: uuid.describe('Id of the post the comment belongs to, from notes_list.'),
+      commentId: uuid.describe('Id of the comment to delete, from note_comments or notes_list.'),
+    }),
     path: (input) => ['announcements', input.id, 'comments', input.commentId],
   }),
   defineTool({
     name: 'note_react',
     title: 'Set a reaction',
     description:
-      'Reaction seen|take|ok on a post. active true sets it, false removes it; repeating it changes nothing. take on a resolved post is not allowed (reaction_invalid).',
+      'Sets or removes your own seen, ok or take reaction on one noticeboard post. seen means you read it, ok means you agree, take means you will handle it: it lets you resolve the post via note_update and makes you a taker, who is notified about new comments and when the post is resolved. Reaction kinds are independent, so you can hold several on one post. Use it to react, not to write text; use note_comment to reply. The call states the desired end state, so repeating it is safe and changes nothing. Reactions notify nobody. Any flat member may call it. Returns the reaction and active as stored. Setting take on an already resolved post fails with 409 announcement_resolved; reopen it first with note_update. Returns 404 announcement_not_found for an unknown post id.',
     method: 'POST',
+    idempotent: true,
     input: z.strictObject({
-      id: uuid,
-      reaction,
-      active: z.boolean(),
+      id: uuid.describe('Id of the post to react to, from notes_list.'),
+      reaction: reaction.describe(
+        'Which reaction kind to set or remove. Kinds are independent: setting one does not clear another.',
+      ),
+      active: z
+        .boolean()
+        .describe(
+          'true sets your reaction, false removes it. Removing one you never set is a no-op.',
+        ),
     }),
     path: (input) => ['announcements', input.id, 'reactions'],
     body: (input) => ({ reaction: input.reaction, active: input.active }),

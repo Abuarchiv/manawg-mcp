@@ -118,7 +118,7 @@ export function registerTool(server: McpServer, client: ManaWgClient, def: ToolD
       annotations: {
         readOnlyHint: def.readOnly ?? def.method === 'GET',
         destructiveHint: def.gate === 'destructive',
-        idempotentHint: def.method === 'GET',
+        idempotentHint: def.idempotent ?? def.method === 'GET',
       },
     },
     // The SDK has already validated `args` against `def.input` at this point.

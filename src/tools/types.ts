@@ -17,6 +17,8 @@ type ToolSpec<TInput extends z.ZodType> = {
   scope?: RequestScope;
   /** Overrides the `readOnlyHint` derived from the method (e.g. a side-effect-free POST). */
   readOnly?: boolean;
+  /** Marks a non-GET tool as idempotent: repeating the call with the same input changes nothing more. */
+  idempotent?: boolean;
   /** Reshapes the route payload before it is returned to the model. */
   transform?: (input: z.output<TInput>, payload: unknown) => unknown;
 };
