@@ -2,10 +2,11 @@
 
 The reference for everything the server exposes: 87 tools, 13 resources, 4 resource templates and
 4 prompts. Each tool calls exactly one route of the ManaWG app API with the body that route
-accepts, so tools and app never disagree about what is allowed.
+accepts. A test fails when the app has a route that no tool or resource covers.
 
 - [Tools](#tools) · [How writes stay safe](#how-writes-stay-safe) · [Resources](#resources) ·
-  [Prompts](#prompts) · [Errors](#errors) · [Not exposed](#not-exposed-on-purpose)
+  [Prompts](#prompts) · [Tool groups](#tool-groups) · [Errors](#errors) ·
+  [Not exposed](#not-exposed-on-purpose)
 
 ## Tools
 
@@ -13,8 +14,12 @@ Every tool that works inside a flat takes an optional `wgCode` (the share code f
 Without it the call goes to `MANAWG_WG_CODE`, and without that to the account's only flat; an
 account in several flats gets `wg_code_required` and passes `wgCode` from then on.
 
-Read tools carry `readOnlyHint`, destructive tools `destructiveHint`. Every tool returns the route
-payload as text and as `structuredContent`.
+Read tools carry `readOnlyHint`, destructive tools `destructiveHint`. A tool returns the route
+payload as text and, when the payload is an object, as `structuredContent`.
+
+Results are bounded so they do not flood the context. A payload above 100 KB loses entries from its
+largest array (or its largest string, such as a CSV export) until it fits. Truncation is never
+silent: the result carries `"_mcp": { "truncated": true, "fields": […] }`.
 
 ### Overview
 
@@ -95,11 +100,11 @@ payload as text and as `structuredContent`.
 | `note_comments` | Read the comments on a post | read |
 | `note_create` | Write a post | write |
 | `chore_swap_request` | Ask the flat to take over a chore | write |
-| `note_update` | Change a post | write |
+| `note_update` | Edit a post | write |
 | `note_delete` | Delete a post | destructive † |
 | `note_comment` | Add a comment to a post | write |
 | `note_comment_update` | Edit your own comment | write |
-| `note_comment_delete` | Delete your own comment | destructive † |
+| `note_comment_delete` | Delete a comment | destructive † |
 | `note_react` | Set a reaction | write |
 
 ### Chat
@@ -135,7 +140,7 @@ payload as text and as `structuredContent`.
 | --- | --- | --- |
 | `members_list` | List members | read |
 | `member_get` | Read a member and their open balances | read |
-| `member_update` | Change a member (admin, sensitive) | destructive † |
+| `member_update` | Move a member out or back in | destructive † |
 | `invite_create` | Create an invite link | write |
 | `invites_list` | List active invite links | read |
 | `invite_revoke` | Revoke an invite link | destructive † |
@@ -143,15 +148,15 @@ payload as text and as `structuredContent`.
 | `notifications_get` | Read notification settings | read |
 | `notifications_update` | Change notification settings | write |
 | `wg_update` | Change flat settings (admin) | destructive † |
+
+### Calendar feed, imports and new flats
+
+| Tool | What it does | Kind |
+| --- | --- | --- |
 | `calendar_subscription_get` | Read the calendar subscription | read |
 | `calendar_subscription_create` | Create the calendar subscription | write |
 | `calendar_subscription_rotate` | Rotate the calendar subscription URL | destructive † |
 | `calendar_subscription_revoke` | Revoke the calendar subscription | destructive † |
-
-### Imports and new flats
-
-| Tool | What it does | Kind |
-| --- | --- | --- |
 | `import_preview` | Preview an import | read |
 | `import_commit` | Commit an import | destructive † |
 | `imports_list` | List imports that can be undone | read |
@@ -173,10 +178,9 @@ Settle Up CSV files, or pasted receipt text. `import_commit` can be taken back i
 calendar feed can be created, rotated and revoked; its URL is a secret and shown to the user only.
 
 `activity_get` returns the newest 80 entries by default and up to 320 with `limit`; older history
-comes from `export_get`. `chat_messages` pages back with `beforeId` only. Fixed costs are always
-in EUR, `recurring_create` and `recurring_update` accept no other `currency`.
-
-`export_get` with `format: csv` returns `{ contentType, content }`.
+comes from `export_get`, which returns `{ contentType, content }` with `format: csv`.
+`chat_messages` pages back with `beforeId` only. Fixed costs are always in EUR, `recurring_create`
+and `recurring_update` accept no other `currency`.
 
 On `initialize` the server sends short instructions for agents: start with `wg_overview`, pass
 `wgCode` for accounts with several flats, money in cents, read before guarded writes, never claim
@@ -218,21 +222,20 @@ bad connection is never booked twice.
 
 ## Resources
 
-`manawg://current/` + `dashboard`, `members`, `expenses`, `recurring`, `shopping`, `inventory`,
-`chores`, `notes`, `chat`, `events`, `absences`, `activity`, `wg` — each returns the live JSON
-payload of the matching route, `mimeType: application/json`. `wg` is account-scoped (all households
-of the signed-in account, no WG code in the path).
+`manawg://current/` followed by `dashboard`, `members`, `expenses`, `recurring`, `shopping`,
+`inventory`, `chores`, `notes`, `chat`, `events`, `absences`, `activity` or `wg`. Each returns the
+live JSON payload of the matching route, `mimeType: application/json`. `wg` is account-scoped (all
+households of the signed-in account, no WG code in the path).
 
-Reads are bounded so no resource floods the context: every payload is capped at 100 KB (arrays
-shrink from the largest one until it fits) and `expenses` additionally keeps only the newest 100
-entries. Truncation is never silent — the result carries `"_mcp": { "truncated": true, "fields":
-[…] }`, and full history is available through `expenses_list` with `limit`/`offset`.
+Resources use the same 100 KB cap and `_mcp` marker as tool results. `expenses` is stricter: it
+keeps only the newest 100 entries and at most 40 KB, and the full history is available through
+`expenses_list` with `limit`/`offset`.
 
 ### Resource templates
 
-`manawg://current/{event|chore|member|recurring}/{id}` resolve one entity by UUID — the four
-routes that answer `GET` on their own. Everything else is listed as a static resource because the
-app has no single-entity `GET` for it.
+`manawg://current/{event|chore|member|recurring}/{id}` resolve one entity by UUID. These are
+the four routes that answer `GET` on their own; for everything else the app has no single-entity
+`GET`, so it is listed as a static resource.
 
 Each template also lists its entities in `resources/list` (up to 50, named by title, name or
 description) and completes `{id}`, so a client's resource picker can offer real entries. If the
@@ -245,39 +248,12 @@ listing fails (for example no unique flat is configured), the template just list
 | `daily_brief` | `focus` | Dashboard, activity, shopping, chores and calendar in up to 10 bullets |
 | `shopping_run` | – | Shopping list merged with the pantry, grouped into one tour list |
 | `payment_reminder` | `tone` | Draft only: friendly reminder for open balances, never sends |
-| `settlement_plan` | – | Minimal transfers from `balances_get` + `settlement_preview`, never commits |
+| `settlement_plan` | – | Fewest transfers from `dashboard_get` balances and `settlement_preview`; never commits |
 
 Prompts return instructions plus tool names; the destructive steps stay gated behind an explicit
 confirmation.
 
-## Errors
-
-Transient failures are retried inside the server: up to two extra attempts (200 ms, 800 ms) for
-`429` with a short `Retry-After`, `5xx` and network errors, always with the same idempotency key on
-writes. One call, retries included, ends after 45 seconds with `timeout`. A `DELETE` retried after
-an unclear first attempt that finds the row gone answers `{ deleted: true, alreadyGone: true }`. Longer rate limits are not slept out — they surface immediately as
-`ManaWG request failed: too_many_requests retry_after_s=<n>`.
-
-Tool and resource failures never carry upstream messages, URLs or credentials:
-
-- `ManaWG request failed: <code>` with `code` drawn from a fixed allowlist
-  (`validation_errors`, `splits_sum_mismatch`, `shopping_item_duplicate`, `too_many_requests`, …);
-- unknown codes fall back to `upstream_http_<status>` or `upstream_network_error`;
-- rate limits add `retry_after_s=<n>`, validation errors add a truncated `details` snippet;
-- invalid arguments are rejected by the MCP layer before any request is sent.
-
-## Not exposed on purpose
-
-Routes the app serves that no tool or resource calls, each with its reason in the
-`INTENTIONALLY_UNEXPOSED` map of `test/api-surface.test.ts`; a new app route fails that test until it
-gets a tool or an entry there:
-
-- deleting a flat and handing over the admin role (irreversible, stay in the app);
-- joining a flat (`POST members`, the invite preview): the invited person does this in the app;
-- push subscriptions and `test_notification` (they belong to a browser);
-- `DELETE recurring-expenses/{id}`, a duplicate of the collection route `recurring_delete` uses.
-
-Set `MANAWG_ALLOW_DESTRUCTIVE=1` to enable the destructive tools listed above.
+## Tool groups
 
 To keep the tool list short, set `MANAWG_TOOLSETS` to the groups an agent needs, for example
 `MANAWG_TOOLSETS=money,shopping`. Unset or `all` registers every group, and `overview` is always
@@ -296,5 +272,43 @@ restricting access.
 | `notes` | Noticeboard |
 | `chat` | Chat |
 | `calendar` | Calendar and absences |
-| `members` | Members and settings, from `members_list` to `wg_update` |
-| `household` | Calendar feed, imports and `wg_create` |
+| `members` | Members and settings |
+| `household` | Calendar feed, imports and new flats |
+
+## Errors
+
+Transient failures are retried inside the server, at most twice more (after 200 ms and 800 ms):
+`500`, `502` and `504` responses, `429` and `503` unless `Retry-After` asks for more than 2
+seconds, network errors and per-attempt timeouts. Writes reuse their idempotency key on every
+attempt. A `PATCH` with an `expected*` guard is not replayed after a network error, a timeout or a
+`5xx`, because the first attempt may have been applied; only a `429` is repeated. One call,
+retries included, ends after 45 seconds with `timeout`.
+
+A `DELETE` retried after an unclear first attempt that finds the row gone answers
+`{ deleted: true, alreadyGone: true }`. Longer waits asked for by a `429` or `503` are not slept
+out: they surface immediately, with `retry_after_s=<n>` after the code.
+
+Tool and resource failures carry no upstream message, URL or credential:
+
+- `ManaWG request failed: <code>`. The code is the app's own error code when it is on a fixed
+  allowlist (`validation_errors`, `splits_sum_mismatch`, `shopping_item_duplicate`, …). Otherwise
+  the HTTP status decides: `401` gives `auth_required`, `403` `access_denied`, `404` `not_found`,
+  `429` `too_many_requests`, `5xx` `internal_error` and any other status `upstream_http_<status>`.
+- Without a usable response the code is `upstream_network_error` (app unreachable), `timeout`
+  (a single attempt or the whole call ran out of time), `auth_failed` (sign-in failed) or
+  `invalid_response` (a success answer that cannot be read). The server itself raises
+  `wg_code_required`, `no_wg_membership` and `invalid_share_code` when the flat cannot be resolved.
+- A `429` or `503` with `Retry-After` adds `retry_after_s=<n>`. Only `validation_errors` adds a truncated `details` snippet
+  of the app's field errors (up to 400 characters).
+- Invalid arguments are rejected by the MCP layer before any request is sent.
+
+## Not exposed on purpose
+
+Routes the app serves that no tool or resource calls, each with its reason in the
+`INTENTIONALLY_UNEXPOSED` map of `test/api-surface.test.ts`; a new app route fails that test until it
+gets a tool or an entry there:
+
+- deleting a flat and handing over the admin role (irreversible, stay in the app);
+- joining a flat (`POST members`, the invite preview): the invited person does this in the app;
+- push subscriptions and `test_notification` (they belong to a browser);
+- `DELETE recurring-expenses/{id}`, a duplicate of the collection route `recurring_delete` uses.

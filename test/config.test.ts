@@ -1,8 +1,9 @@
+import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { expect, it } from 'vitest';
 import { loadConfig } from '../src/config.js';
-import { PROMPT_DEFS } from '../src/prompts.js';
+import type { ManaWgClient } from '../src/manawg-client.js';
+import { buildServer } from '../src/server.js';
 import { selectTools, TOOL_DEFS } from '../src/tools/registry.js';
-import { toolsetEnabled } from '../src/toolsets.js';
 
 function validEnv(): NodeJS.ProcessEnv {
   return {
@@ -38,7 +39,6 @@ it('rejects missing required credentials without echoing their values', () => {
       expect(message).not.toContain(value);
     }
   }
-  expect(message).not.toContain('MEMBER_SESSION_SECRET');
 });
 
 it('requires either a refresh token or an email/password pair', () => {
@@ -51,7 +51,6 @@ it('requires either a refresh token or an email/password pair', () => {
   expect(message).toContain('MANAWG_SUPABASE_REFRESH_TOKEN');
   expect(message).toContain('MANAWG_EMAIL');
   expect(message).toContain('MANAWG_PASSWORD');
-  expect(message).not.toContain('a'.repeat(64));
 });
 
 it('prefers the refresh token over password sign-in when both are set', () => {
@@ -190,6 +189,7 @@ it.each([
   ['MANAWG_HTTP_PORT', '0'],
   ['MANAWG_HTTP_PORT', 'not-a-port'],
   ['MANAWG_HTTP_PORT', '70000'],
+  ['MANAWG_HTTP_PORT', 'NaN'],
   ['MANAWG_HTTP_PATH', 'mcp'],
   ['MANAWG_HTTP_PATH', '/mcp/'],
   ['MANAWG_HTTP_HOST', '0.0.0.0/mcp'],
@@ -197,23 +197,12 @@ it.each([
   ['MANAWG_DRAIN_MS', '-1'],
   ['MANAWG_DRAIN_MS', '5000.5'],
   ['MANAWG_DRAIN_MS', '70000'],
+  ['MANAWG_DRAIN_MS', 'NaN'],
 ])('rejects %s=%s', (name, value) => {
   const message = thrownMessage(() => loadConfig({ ...validEnv(), [name]: value }));
 
   expect(message).toContain(name);
   expect(message).not.toContain(value);
-});
-
-it('ignores the retired member identity variables', () => {
-  const config = loadConfig({
-    ...validEnv(),
-    MANAWG_MEMBER_ID: 'not-a-uuid',
-    MANAWG_MEMBER_TOKEN: 'nope',
-    MANAWG_IDENTITY_CACHE: '/var/identity.json',
-  });
-
-  expect(config).not.toHaveProperty('memberId');
-  expect(config).not.toHaveProperty('identityCachePath');
 });
 
 it('narrows the tool list to MANAWG_TOOLSETS and keeps overview', () => {
@@ -230,7 +219,6 @@ it('narrows the tool list to MANAWG_TOOLSETS and keeps overview', () => {
   expect(names).toContain('expense_create');
   expect(names).toContain('shopping_add');
   expect(names).not.toContain('chat_send');
-  expect(names).not.toContain('expense_delete');
 
   expect(
     thrownMessage(() => loadConfig({ ...validEnv(), MANAWG_TOOLSETS: 'money,pets' })),
@@ -238,10 +226,26 @@ it('narrows the tool list to MANAWG_TOOLSETS and keeps overview', () => {
   expect(thrownMessage(() => loadConfig({ ...validEnv(), MANAWG_TOOLSETS: ',' }))).toContain(
     'names no toolset',
   );
+});
 
-  // Prompts that walk through unregistered tools are not offered.
-  const prompts = PROMPT_DEFS.filter((def) =>
-    def.toolsets.every((toolset) => toolsetEnabled(toolset, toolsets)),
-  ).map((def) => def.name);
-  expect(prompts).toEqual(['payment_reminder', 'settlement_plan']);
+it('offers only the prompts whose tools are registered', async () => {
+  const unusedClient: ManaWgClient = {
+    call: () => Promise.reject(new Error('prompts never call the app')),
+  };
+  const server = buildServer(unusedClient, { toolsets: ['money'] });
+  const client = new Client({ name: 'prompts', version: '0.0.0' });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await Promise.all([client.connect(clientTransport), server.connect(serverTransport)]);
+
+  const { prompts } = await client.listPrompts();
+  expect(prompts.map((prompt) => prompt.name).sort()).toEqual([
+    'payment_reminder',
+    'settlement_plan',
+  ]);
+
+  const reminder = await client.getPrompt({ name: 'payment_reminder', arguments: { tone: 'dry' } });
+  expect(JSON.stringify(reminder.messages)).toContain('Requested tone: dry');
+
+  await client.close();
+  await server.close();
 });

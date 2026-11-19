@@ -9,17 +9,17 @@ import {
 } from './register.js';
 import { RESOURCE_DEFS, RESOURCE_TEMPLATE_DEFS } from './resources.js';
 import { selectTools, TOOL_DEFS } from './tools/registry.js';
-import { toolsetEnabled } from './toolsets.js';
+import { type ToolsetName, toolsetEnabled } from './toolsets.js';
 import { serverVersion } from './version.js';
 
-export type ServerOptions = {
+type ServerOptions = {
   allowDestructive?: boolean;
   /** MANAWG_TOOLSETS: register only these tool groups (plus `overview`); all when unset. */
-  toolsets?: readonly string[];
+  toolsets?: readonly ToolsetName[];
 };
 
 /** Sent once at initialize: what an agent needs before its first call. */
-export const SERVER_INSTRUCTIONS = `ManaWG is a shared-flat household app: expenses and balances, cleaning rota, shopping list, pantry, notes, chat and calendar. You act as the signed-in member.
+const SERVER_INSTRUCTIONS = `ManaWG is a shared-flat household app: expenses and balances, cleaning rota, shopping list, pantry, notes, chat and calendar. You act as the signed-in member.
 
 - Start with wg_overview: it names the flat, its members and you (currentMember). Use member ids from there; never guess them.
 - If the account belongs to several flats, call wg_list and pass the code as wgCode to every call. With one flat, leave wgCode out.
@@ -29,15 +29,17 @@ export const SERVER_INSTRUCTIONS = `ManaWG is a shared-flat household app: expen
 - Confirm with the user before anything that notifies other people (chat_send, reminder_send) or deletes data.
 - Errors read "ManaWG request failed: <code>"; the code says what went wrong, some add what to do next.`;
 
-const SERVER_ICONS = [
+export const SERVER_DESCRIPTION =
+  'Shared-flat app ManaWG: expenses, cleaning rota, shopping list, calendar and chat for agents.';
+
+export const SERVER_ICONS = [
   { src: 'https://manawg.com/icon-512.png', mimeType: 'image/png', sizes: ['512x512'] },
   { src: 'https://manawg.com/icon.svg', mimeType: 'image/svg+xml', sizes: ['any'] },
 ];
 
 /**
- * Clients speaking the 2026-07-28 revision may cache these lists. They only change with a
- * release, so an hour is safe and spares a ~127 KB `tools/list` on every connection. The
- * per-user resource listing and `resources/read` stay uncached.
+ * Tool, prompt and template lists are fixed for the life of the process, so clients may cache
+ * them for an hour. Resource listing and reads differ per user and stay uncached.
  */
 const STATIC_LIST = { ttlMs: 3_600_000, cacheScope: 'public' } as const;
 const STATIC_LIST_CACHE = {
@@ -53,7 +55,7 @@ export function buildServer(client: ManaWgClient, options: ServerOptions = {}): 
       name: 'manawg-mcp',
       title: 'ManaWG',
       version: serverVersion(),
-      description: 'Shared-flat app: expenses, cleaning rota, shopping, calendar, chat',
+      description: SERVER_DESCRIPTION,
       websiteUrl: 'https://manawg.com',
       icons: SERVER_ICONS,
     },

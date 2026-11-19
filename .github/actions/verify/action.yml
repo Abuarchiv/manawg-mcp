@@ -1,0 +1,23 @@
+name: Verify
+description: Install dependencies, then lint, typecheck, test, build and smoke-test the server.
+
+runs:
+  using: composite
+  steps:
+    - uses: pnpm/action-setup@v6
+    - uses: actions/setup-node@v7
+      with:
+        node-version-file: .nvmrc
+        cache: pnpm
+    - run: pnpm install --frozen-lockfile
+      shell: bash
+    - run: pnpm lint
+      shell: bash
+    - run: pnpm typecheck
+      shell: bash
+    - run: pnpm test
+      shell: bash
+    - run: pnpm build
+      shell: bash
+    - run: pnpm smoke
+      shell: bash

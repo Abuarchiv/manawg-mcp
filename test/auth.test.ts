@@ -64,12 +64,17 @@ function grantResponse(session: Record<string, unknown>): Response {
   });
 }
 
-function signInCall(): { url: string; init: RequestInit } {
+function tokenCall(): { url: string; init: RequestInit } {
   const call = fetchMock.mock.calls[0];
   if (!call) {
-    throw new Error('Expected a sign-in request');
+    throw new Error('Expected a token request');
   }
   return { url: String(call[0]), init: (call[1] ?? {}) as RequestInit };
+}
+
+/** The `Cookie` header the app expects for a session that fits one cookie. */
+function cookieFor(session: Record<string, unknown>): string {
+  return `${KEY}=base64-${Buffer.from(JSON.stringify(session), 'utf8').toString('base64url')}`;
 }
 
 function decodeCookieHeader(header: string): string {
@@ -79,7 +84,7 @@ function decodeCookieHeader(header: string): string {
     : decodeURIComponent(value);
 }
 
-it('splits long sessions into chunked pairs that decode back to the session', () => {
+it('splits a long session into chunks of at most MAX_CHUNK_SIZE', () => {
   const session = { ...freshSession(), user: { id: 'user-1', padding: 'x'.repeat(4000) } };
   const json = JSON.stringify(session);
   const pairs = sessionCookiePairs(KEY, json);
@@ -87,8 +92,9 @@ it('splits long sessions into chunked pairs that decode back to the session', ()
   expect(pairs.length).toBeGreaterThan(1);
   expect(pairs[0]?.name).toBe(`${KEY}.0`);
   expect(pairs.every((pair) => pair.value.length <= MAX_CHUNK_SIZE)).toBe(true);
-  expect(pairs.map((pair) => pair.value).join('')).toBe(
-    `base64-${Buffer.from(json, 'utf8').toString('base64url')}`,
+  const joined = pairs.map((pair) => pair.value).join('');
+  expect(JSON.parse(Buffer.from(joined.slice('base64-'.length), 'base64url').toString())).toEqual(
+    session,
   );
 });
 
@@ -100,7 +106,7 @@ it('signs in with the password grant and caches the session', async () => {
 
   const header = await controller.cookieHeader();
 
-  const { url, init } = signInCall();
+  const { url, init } = tokenCall();
   expect(url).toBe(`${SUPABASE_URL}/auth/v1/token?grant_type=password`);
   expect(new Headers(init.headers).get('apikey')).toBe(PUBLISHABLE_KEY);
   expect(JSON.parse(String(init.body))).toEqual({
@@ -108,9 +114,7 @@ it('signs in with the password grant and caches the session', async () => {
     email: 'member@example.test',
     password: 'correct horse battery',
   });
-  expect(header).toBe(
-    `${KEY}=base64-${Buffer.from(JSON.stringify(session), 'utf8').toString('base64url')}`,
-  );
+  expect(header).toBe(cookieFor(session));
   expect(fetchMock).toHaveBeenCalledTimes(1);
 
   const cached = JSON.parse(readFileSync(path, 'utf8'));
@@ -124,9 +128,7 @@ it('reuses a cached session without any network call', async () => {
   writeFileSync(path, JSON.stringify(session), { mode: 0o600 });
   const controller = createSessionController(authConfig({ sessionCachePath: path }), fetchMock);
 
-  await expect(controller.cookieHeader()).resolves.toBe(
-    `${KEY}=base64-${Buffer.from(JSON.stringify(session), 'utf8').toString('base64url')}`,
-  );
+  await expect(controller.cookieHeader()).resolves.toBe(cookieFor(session));
   expect(fetchMock).not.toHaveBeenCalled();
 });
 
@@ -143,15 +145,13 @@ it('refreshes an expired cached session with its refresh token', async () => {
 
   const header = await controller.cookieHeader();
 
-  const { url, init } = signInCall();
+  const { url, init } = tokenCall();
   expect(url).toBe(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`);
   expect(JSON.parse(String(init.body))).toEqual({
     grant_type: 'refresh_token',
     refresh_token: 'refresh-token-1',
   });
-  expect(header).toBe(
-    `${KEY}=base64-${Buffer.from(JSON.stringify(rotated), 'utf8').toString('base64url')}`,
-  );
+  expect(header).toBe(cookieFor(rotated));
   expect(JSON.parse(readFileSync(path, 'utf8')).refresh_token).toBe('refresh-token-2');
 });
 
@@ -168,7 +168,7 @@ it('falls back to the bootstrap refresh token when no session is cached', async 
 
   await controller.cookieHeader();
 
-  const { url, init } = signInCall();
+  const { url, init } = tokenCall();
   expect(url).toBe(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`);
   expect(JSON.parse(String(init.body))).toEqual({
     grant_type: 'refresh_token',
@@ -176,35 +176,58 @@ it('falls back to the bootstrap refresh token when no session is cached', async 
   });
 });
 
-it('reports rejected credentials without echoing the password', async () => {
+it('reports rejected credentials as auth_failed and writes no cache', async () => {
   fetchMock.mockResolvedValue(
     new Response(JSON.stringify({ error: 'Invalid login credentials' }), {
       status: 401,
       headers: { 'content-type': 'application/json' },
     }),
   );
-  const controller = createSessionController(authConfig(), fetchMock);
+  const path = cachePath();
+  const controller = createSessionController(authConfig({ sessionCachePath: path }), fetchMock);
 
   await expect(controller.cookieHeader()).rejects.toThrow('auth_failed');
 
-  const failure = await controller
-    .cookieHeader()
-    .catch((error: unknown) => (error instanceof Error ? error.message : ''));
-  expect(failure).toBe('auth_failed');
-  expect(failure).not.toContain('correct horse battery');
-  expect(failure).not.toContain('member@example.test');
+  expect(existsSync(path)).toBe(false);
 });
 
-it('keeps a transient auth outage separate from rejected credentials', async () => {
-  fetchMock.mockRejectedValue(new Error('socket hang up with secrets'));
+it('keeps the cause of a failed token request out of the message', async () => {
+  const outage = new Error('socket hang up with secrets');
+  fetchMock.mockRejectedValue(outage);
   const controller = createSessionController(authConfig(), fetchMock);
 
-  const message = await controller
-    .cookieHeader()
-    .catch((error: unknown) => (error instanceof Error ? error.message : ''));
+  const error = await controller.cookieHeader().catch((caught: unknown) => caught);
 
-  expect(message).toBe('auth_failed');
-  expect(message).not.toContain('secrets');
+  expect(error).toMatchObject({ message: 'auth_failed', cause: outage });
+});
+
+it('refuses a token answer that carries no tokens', async () => {
+  fetchMock.mockResolvedValue(grantResponse({ expires_in: 3600 }));
+  const path = cachePath();
+  const controller = createSessionController(authConfig({ sessionCachePath: path }), fetchMock);
+
+  await expect(controller.cookieHeader()).rejects.toThrow('auth_failed');
+
+  expect(existsSync(path)).toBe(false);
+});
+
+it('retries the bootstrap token after a network failure but not after a rejection', async () => {
+  const config = authConfig({
+    email: undefined,
+    password: undefined,
+    bootstrapRefreshToken: 'bootstrap-token',
+  });
+  fetchMock
+    .mockRejectedValueOnce(new Error('offline'))
+    .mockResolvedValueOnce(new Response('{}', { status: 400 }));
+  const controller = createSessionController(config, fetchMock);
+
+  await expect(controller.cookieHeader()).rejects.toThrow('auth_failed');
+  await expect(controller.cookieHeader()).rejects.toThrow('auth_failed');
+  await expect(controller.cookieHeader()).rejects.toThrow('auth_failed');
+
+  const bodies = fetchMock.mock.calls.map((call) => JSON.parse(String(call[1]?.body)));
+  expect(bodies.map((body) => body.refresh_token)).toEqual(['bootstrap-token', 'bootstrap-token']);
 });
 
 it('ingests rotated Set-Cookie headers from the app on the next request', async () => {
@@ -224,9 +247,7 @@ it('ingests rotated Set-Cookie headers from the app on the next request', async 
   await controller.ingest(response);
 
   const header = await controller.cookieHeader();
-  expect(header).toBe(
-    `${KEY}=base64-${Buffer.from(JSON.stringify(rotated), 'utf8').toString('base64url')}`,
-  );
+  expect(header).toBe(cookieFor(rotated));
   expect(fetchMock).not.toHaveBeenCalled();
 });
 
@@ -271,8 +292,8 @@ it('refreshes with its own refresh token after invalidate and keeps the cache', 
   const header = await controller.cookieHeader();
 
   expect(fetchMock).toHaveBeenCalledTimes(1);
-  expect(signInCall().url).toBe(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`);
-  expect(JSON.parse(String(signInCall().init.body)).refresh_token).toBe('refresh-token-1');
+  expect(tokenCall().url).toBe(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`);
+  expect(JSON.parse(String(tokenCall().init.body)).refresh_token).toBe('refresh-token-1');
   expect(decodeCookieHeader(header)).toContain('at-second');
 });
 
@@ -297,7 +318,7 @@ it('adopts a session a sibling rotated on invalidate and leaves the cache untouc
   expect(fetchMock).not.toHaveBeenCalled();
 });
 
-it('never replays the spent bootstrap token after invalidate (foreign wgCode, then valid call)', async () => {
+it('does not replay the spent bootstrap token after invalidate', async () => {
   fetchMock
     .mockResolvedValueOnce(grantResponse({ ...freshSession(), refresh_token: 'rotated-1' }))
     .mockResolvedValueOnce(grantResponse({ ...freshSession(), refresh_token: 'rotated-2' }));

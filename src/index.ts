@@ -1,12 +1,8 @@
-import { pathToFileURL } from 'node:url';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import { httpHandlerOptions, serverFactory } from './app.js';
 import { type AppConfig, loadConfig } from './config.js';
+import { errorMessage } from './errors.js';
 import { startHttpServer } from './http.js';
-
-function errorMessage(error: unknown): string {
-  return error instanceof Error ? error.message : 'unknown error';
-}
 
 function readConfig(): AppConfig {
   try {
@@ -18,22 +14,20 @@ function readConfig(): AppConfig {
 }
 
 async function runHttp(config: AppConfig) {
+  const handlerOptions = httpHandlerOptions(config);
   const running = await startHttpServer({
     host: config.http.host,
     port: config.http.port,
     drainMs: config.http.drainMs,
-    ...httpHandlerOptions(config, (error) =>
-      console.error(`mcp_http_error: ${errorMessage(error)}`),
-    ),
+    ...handlerOptions,
   });
-  const base = running.url.slice(0, running.url.length - config.http.path.length);
   console.error(
-    `ManaWG MCP server ready transport=http auth=${config.auth.mode} mcp=${running.url} health=${base}/health ready=${base}/ready`,
+    `ManaWG MCP server ready transport=http auth=${handlerOptions.auth.kind} mcp=${running.url} health=${running.origin}/health ready=${running.origin}/ready`,
   );
 
   const shutdown = (signal: string) => {
     console.error(`shutdown: ${signal} received, draining ${config.http.drainMs}ms`);
-    running.beginShutdown().then(
+    running.close().then(
       () => process.exit(0),
       (error: unknown) => {
         console.error(`shutdown_error: ${errorMessage(error)}`);
@@ -43,22 +37,19 @@ async function runHttp(config: AppConfig) {
   };
   process.once('SIGTERM', () => shutdown('SIGTERM'));
   process.once('SIGINT', () => shutdown('SIGINT'));
-  return running;
 }
 
-export function start() {
+async function main() {
   const config = readConfig();
   if (config.transport === 'http') {
-    return runHttp(config);
+    await runHttp(config);
+    return;
   }
-  const handle = serveStdio(serverFactory(config));
+  serveStdio(serverFactory(config));
   console.error('ManaWG MCP server ready transport=stdio');
-  return handle;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  Promise.resolve(start()).catch((error: unknown) => {
-    console.error(`startup_error: ${errorMessage(error)}`);
-    process.exit(1);
-  });
-}
+main().catch((error: unknown) => {
+  console.error(`startup_error: ${errorMessage(error)}`);
+  process.exit(1);
+});

@@ -26,8 +26,9 @@ pnpm build
 Tests, lint, typecheck and `pnpm smoke` need no credentials. Smoke starts the built server with
 placeholder configuration only, ignores your shell environment and env file, and checks the
 advertised tools, resources and prompts against the registries in `dist/`, once without and once
-with `MANAWG_ALLOW_DESTRUCTIVE`. Run `pnpm build` first. `pnpm live-check` talks to a real ManaWG instance and
-needs the env file described in the [self-hosting guide](docs/self-hosting.md#local-setup).
+with `MANAWG_ALLOW_DESTRUCTIVE`. Run `pnpm build` first. `pnpm live-check` talks to a real ManaWG
+instance and needs the env file described in the
+[self-hosting guide](docs/self-hosting.md#local-setup).
 
 ## Rules for changes
 
@@ -36,7 +37,9 @@ needs the env file described in the [self-hosting guide](docs/self-hosting.md#lo
   together.
 - **Destructive tools stay gated.** Anything that deletes or cannot be undone registers only with
   `MANAWG_ALLOW_DESTRUCTIVE=1` and carries `destructiveHint`.
-- **No upstream text in errors.** Failures map to a code from the allowlist in `src/errors.ts`.
+- **No upstream text in errors.** A failure maps to a code from the allowlist in `src/errors.ts`,
+  or to a status-derived code such as `upstream_http_<status>`. Only `validation_errors` carries a
+  truncated detail.
 - **Changelog.** Note user-visible changes under the unreleased version in
   [CHANGELOG.md](CHANGELOG.md).
 

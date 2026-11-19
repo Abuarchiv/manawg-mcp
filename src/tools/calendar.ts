@@ -1,25 +1,22 @@
 import { z } from 'zod';
-import { isoDateTime, uuid } from './shared.js';
+import { isoDateTime, uuid, withoutId } from './shared.js';
 import { defineTool } from './types.js';
 
-const when = z.union([z.iso.date(), z.iso.datetime({ offset: true })]);
+/** The app rejects dates outside these years as typos (0026, 20266). */
+function yearInRange(value: string): boolean {
+  const year = new Date(value).getUTCFullYear();
+  return year >= 1900 && year <= 2200;
+}
+
+const yearMessage = 'The year must be 1900..2200.';
+const dateTime = isoDateTime.refine(yearInRange, yearMessage);
+const when = z
+  .union([z.iso.date(), z.iso.datetime({ offset: true })])
+  .refine(yearInRange, yearMessage);
 const eventTitle = z.string().trim().min(1).max(200);
 const eventDescription = z.string().trim().max(2000);
 const eventLocation = z.string().trim().max(200);
-const eventRecurrence = z
-  .string()
-  .trim()
-  .max(200)
-  .describe(
-    'Repeat rule, an RFC 5545 subset with parts separated by ";", for example "FREQ=WEEKLY;BYDAY=MO,TH;COUNT=10". FREQ=DAILY|WEEKLY|MONTHLY|YEARLY is required; optional INTERVAL 1..365, BYDAY (MO..SU), COUNT 1..366, UNTIL. Anything else fails with recurrence_invalid.',
-  );
-const reason = z
-  .string()
-  .trim()
-  .max(120)
-  .nullable()
-  .optional()
-  .describe('Optional free-text reason, for example "Holiday". Omit or send null for none.');
+const eventRecurrence = z.string().trim().max(200);
 
 /** The app parses a bare date as midnight UTC, which would drop events later that day. */
 function endOfBareDate(value: string): string {
@@ -31,20 +28,23 @@ export const calendarTools = [
     name: 'events_list',
     title: 'Read calendar events',
     description:
-      'List the flat calendar events, optionally inside a time window, ordered by start. Use it to see what is planned or to find an event id; use event_get when you already have the id, and calendar_subscription_get for the feed URL that adds the calendar to a calendar app. Read-only. A recurring event comes back once with its recurrence rule, not expanded into single dates. The window applies only when from and to are both set; without it all events are returned. More than 1000 matches fail with 503 events_window_too_large, so narrow the window. Each event has id, title, description, startsAt, endsAt, allDay, location, recurrence, createdByMemberId and updatedAt.',
+      'List the flat calendar events, optionally inside a time window, ordered by start. Use it to see what is planned or to find an event id; use event_get when you already have the id, and calendar_subscription_get for the feed URL that adds the calendar to a calendar app. A recurring event comes back once with its recurrence rule, not expanded into single dates. Send from and to together to limit the window; without them all events are returned. More than 1000 matches fail with 503 events_window_too_large, so narrow the window. Each event has id, title, description, startsAt, endsAt, allDay, location, recurrence, createdByMemberId and updatedAt.',
     method: 'GET',
-    input: z.strictObject({
-      from: when
-        .optional()
-        .describe(
-          'Window start: a date (2026-12-01) or an ISO 8601 datetime with offset. Only applies together with to.',
-        ),
-      to: when
-        .optional()
-        .describe(
-          'Window end: a date or an ISO 8601 datetime with offset. A bare date covers that whole day (sent as 23:59:59.999 UTC). Only applies together with from.',
-        ),
-    }),
+    input: z
+      .strictObject({
+        from: when
+          .optional()
+          .describe('Window start: a date (2026-12-01) or an ISO 8601 datetime with offset.'),
+        to: when
+          .optional()
+          .describe(
+            'Window end: a date or an ISO 8601 datetime with offset. A bare date covers that whole day (sent as 23:59:59.999 UTC).',
+          ),
+      })
+      .refine((input) => (input.from === undefined) === (input.to === undefined), {
+        message: 'Send from and to together, or neither',
+        path: ['from'],
+      }),
     path: () => ['events'],
     query: (input) => ({ from: input.from, to: input.to && endOfBareDate(input.to) }),
   }),
@@ -52,7 +52,7 @@ export const calendarTools = [
     name: 'event_get',
     title: 'Read a calendar event',
     description:
-      'Fetch one calendar event with all its fields, including updatedAt, the version token event_update takes as expectedUpdatedAt. Use it when you have an event id and want its current state, for example before editing; use events_list to browse or find events. Read-only. An id that is not in this flat fails with 404 event_not_found.',
+      'Fetch one calendar event with all its fields, including updatedAt, the version token event_update takes as expectedUpdatedAt. Use it when you have an event id and want its current state, for example before editing; use events_list to browse or find events. An id that is not in this flat fails with 404 event_not_found.',
     method: 'GET',
     input: z.strictObject({
       id: uuid.describe('Id of the event, from events_list or event_create.'),
@@ -63,17 +63,17 @@ export const calendarTools = [
     name: 'event_create',
     title: 'Create a calendar event',
     description:
-      'Add a new event, one-off or repeating, to the flat calendar. Use it for something new; use event_update to change an existing event, and absence_create instead when a member is away. Not idempotent: calling it twice creates two events. The other flat members are notified about the new event, not the caller; a failed notification does not fail the call. An endsAt before startsAt fails with ends_before_start. Returns the created event with its id.',
+      'Add a new event, one-off or repeating, to the flat calendar. Use it for something new; use event_update to change an existing event, and absence_create instead when a member is away. Not idempotent: calling it twice creates two events. The other flat members are notified about the new event, not the caller. An endsAt before startsAt fails with ends_before_start. Returns the created event with its id and a warning that is null unless the push delivery could not be confirmed.',
     method: 'POST',
     input: z.strictObject({
       title: eventTitle.describe(
         'Short name of the event, shown in the calendar and the notification.',
       ),
-      startsAt: isoDateTime.describe(
+      startsAt: dateTime.describe(
         'Start as ISO 8601 datetime with offset, for example 2026-12-05T19:00:00+01:00; the year must be 1900..2200. For an all-day event only the date counts: send the date at T00:00:00Z.',
       ),
       description: eventDescription.optional().describe('Optional longer details for the event.'),
-      endsAt: isoDateTime
+      endsAt: dateTime
         .nullable()
         .optional()
         .describe(
@@ -88,7 +88,11 @@ export const calendarTools = [
       location: eventLocation
         .optional()
         .describe('Optional place, for example "Kitchen" or an address.'),
-      recurrence: eventRecurrence.optional(),
+      recurrence: eventRecurrence
+        .optional()
+        .describe(
+          'Repeat rule, an RFC 5545 subset with parts separated by ";", for example "FREQ=WEEKLY;BYDAY=MO,TH;COUNT=10". FREQ=DAILY|WEEKLY|MONTHLY|YEARLY is required; optional INTERVAL 1..365, BYDAY (MO..SU), COUNT 1..366, UNTIL. Anything else fails with recurrence_invalid.',
+        ),
     }),
     path: () => ['events'],
     body: (input) => input,
@@ -106,12 +110,12 @@ export const calendarTools = [
         .nullable()
         .optional()
         .describe('New details. null clears them; omit to keep the current text.'),
-      startsAt: isoDateTime
+      startsAt: dateTime
         .optional()
         .describe(
           'New start as ISO 8601 datetime with offset, year 1900..2200. For an all-day event only the date counts.',
         ),
-      endsAt: isoDateTime
+      endsAt: dateTime
         .nullable()
         .optional()
         .describe(
@@ -138,10 +142,7 @@ export const calendarTools = [
         ),
     }),
     path: (input) => ['events', input.id],
-    body: (input) => {
-      const { id, ...body } = input;
-      return body;
-    },
+    body: withoutId,
   }),
   defineTool({
     name: 'event_delete',
@@ -170,18 +171,18 @@ export const calendarTools = [
           .describe(
             '"cancel" drops this date from the series. "detach" makes this date a separate one-off event described by title, startsAt and the other detail fields.',
           ),
-        occurrenceStartsAt: isoDateTime.describe(
+        occurrenceStartsAt: dateTime.describe(
           'Start of the occurrence to change, as ISO 8601 datetime with offset, exactly as the series produces it: the event startsAt moved to that date by its recurrence rule, same time of day (Berlin time). For an all-day event send the date at T00:00:00Z.',
         ),
         title: eventTitle
           .optional()
           .describe('detach only, required: title of the new one-off event.'),
-        startsAt: isoDateTime
+        startsAt: dateTime
           .optional()
           .describe(
             'detach only, required: start of the new one-off event as ISO 8601 datetime with offset, year 1900..2200. Send the same value as occurrenceStartsAt to keep the time.',
           ),
-        endsAt: isoDateTime
+        endsAt: dateTime
           .nullable()
           .optional()
           .describe(
@@ -205,23 +206,33 @@ export const calendarTools = [
             'detach only: the updatedAt value you last read from event_get. The change only applies if the series is unchanged since; otherwise 409 event_changed.',
           ),
       })
-      .refine((input) => input.action !== 'detach' || (input.title && input.startsAt), {
-        message: 'detach needs title and startsAt',
-        path: ['title'],
-      }),
+      .refine(
+        (input) =>
+          input.action !== 'detach' || (input.title !== undefined && input.startsAt !== undefined),
+        { message: 'detach needs title and startsAt', path: ['title'] },
+      )
+      .refine(
+        (input) =>
+          input.action !== 'cancel' ||
+          [
+            input.title,
+            input.startsAt,
+            input.endsAt,
+            input.allDay,
+            input.location,
+            input.description,
+            input.expectedUpdatedAt,
+          ].every((field) => field === undefined),
+        { message: 'cancel takes only id and occurrenceStartsAt', path: ['action'] },
+      ),
     path: (input) => ['events', input.id, 'occurrence'],
-    body: (input) => {
-      const { id, ...body } = input;
-      return input.action === 'cancel'
-        ? { action: input.action, occurrenceStartsAt: input.occurrenceStartsAt }
-        : body;
-    },
+    body: withoutId,
   }),
   defineTool({
     name: 'absences_list',
     title: 'Read absences',
     description:
-      'List the absences of flat members that are running or still ahead (an absence stays listed until its end date has passed, counted in Berlin time), ordered by start. Use it to see who is away; use events_list for flat calendar events, absence_create to record a new absence and absence_delete to remove one. Read-only, takes no parameters. Each entry has id, memberId, memberName, startDate, endDate (ISO 8601) and reason (text or null); the id is what absence_delete needs.',
+      'List the absences of flat members that are running or still ahead (an absence stays listed until its end date has passed, counted in Berlin time), ordered by start. Use it to see who is away; use events_list for flat calendar events, absence_create to record a new absence and absence_delete to remove one. Each entry has id, memberId, memberName, startDate, endDate (ISO 8601) and reason (text or null); the id is what absence_delete needs.',
     method: 'GET',
     input: z.strictObject({}),
     path: () => ['absences'],
@@ -236,13 +247,19 @@ export const calendarTools = [
       memberId: uuid.describe(
         'Id of the absent member, from members_list or wg_overview. Use your own member id unless you are a flat admin.',
       ),
-      startDate: isoDateTime.describe(
+      startDate: dateTime.describe(
         'First day of the absence as ISO 8601 datetime with offset, for example 2026-12-24T00:00:00+01:00. Only the Berlin calendar day counts.',
       ),
-      endDate: isoDateTime.describe(
+      endDate: dateTime.describe(
         'Last day of the absence, inclusive, as ISO 8601 datetime with offset, not before startDate. Only the Berlin calendar day counts.',
       ),
-      reason,
+      reason: z
+        .string()
+        .trim()
+        .max(120)
+        .nullable()
+        .optional()
+        .describe('Optional free-text reason, for example "Holiday". Omit or send null for none.'),
     }),
     path: () => ['absences'],
     body: (input) => input,

@@ -4,7 +4,7 @@
 
 ### Added
 
-- 13 tools, so an agent no longer dead-ends where the app has a route:
+- 13 tools for app routes the server did not cover yet:
   - `chore_complete_undo` takes back your latest chore completion; `chore_complete` now says to
     keep its `completion` for it.
   - `chore_swap_request` asks the flat to take over a chore (a noticeboard post tied to the chore,
@@ -28,6 +28,7 @@
 - `MANAWG_TOOLSETS` registers only the named tool groups (plus `overview`), so a client that
   struggles with long tool lists can get a short one. Unset keeps every tool.
 - Server metadata (`description`, `websiteUrl`, icons) in `initialize` and in `server.json`.
+- `glama.json` names the maintainer for the Glama directory.
 - Clients on the 2026-07-28 protocol revision may cache `tools/list`, `prompts/list`,
   `resources/templates/list` and `server/discover` for an hour.
 
@@ -51,11 +52,18 @@
 - The release workflow checks the tag against `package.json`, `server.json` and the changelog,
   sets `latest` only for final releases and creates the GitHub Release from this file.
   `pnpm smoke` runs without credentials and checks the full tool list as well.
-- Request bodies match the app API contract again, the HTTP transport is hardened, `capPayload`
-  no longer loops on one-item arrays, and `glama.json` names the maintainer for Glama.
 
 ### Fixed
 
+- Request bodies match the app API contract: `wg_update` takes only a required `name`, `chat_send`
+  is text only with a required `body`, `expense_update` no longer offers `currency`,
+  `settlement_commit` forwards the `offset` flag of preview splits, inventory quantities,
+  thresholds and deltas accept two decimals, `events_list` widens a bare-date `to` to the end of
+  that day, `notifications_update` accepts `notifyStatementEmail` and `export_get` accepts
+  `choreCompletions` and `inventory`.
+- `capPayload` no longer loops forever on one-item arrays.
+- The HTTP transport aborts upstream work when the client disconnects, and Supabase token calls
+  time out instead of blocking later ones.
 - A `401` caused by a wrong flat or membership (`not_a_member`, `member_deactivated`) no longer
   wipes the session; only `auth_required` triggers a refresh. A refresh uses the session's own
   refresh token, and the bootstrap token is tried at most once per process.
@@ -68,9 +76,10 @@
 
 ### Security
 
-- CORS: the preflight answers the headers the browser asks for (`Access-Control-Request-Headers`,
-  `Vary`), and the default allow list includes `mcp-method` and `mcp-name`, so MCP Inspector and
-  2.x SDK clients get through it.
+- A keyless HTTP server bound to loopback validates the `Host` header, which blocks DNS rebinding.
+- CORS: the preflight allows the headers the browser asks for (`Access-Control-Request-Headers`)
+  and sets `Vary`, so MCP Inspector and 2.x SDK clients, which send `mcp-method` and `mcp-name`,
+  get through it.
 - `MANAWG_HTTP_CORS=1` without an API key (keyless loopback) no longer sends
   `Access-Control-Allow-Origin: *` and no longer skips the Origin check: only `localhost`,
   `127.0.0.1` and `[::1]` origins pass, others get `403` (preflight included). With an API key or

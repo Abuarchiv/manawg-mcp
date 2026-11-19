@@ -3,7 +3,7 @@
 <p align="center">
   Your shared flat, for your AI assistant: expenses, balances, cleaning rota, shopping list,
   supplies, noticeboard, chat and calendar of <a href="https://manawg.com">ManaWG</a>, as tools for
-  Claude, ChatGPT, Cursor and every other MCP client.
+  Claude, ChatGPT, Cursor and other MCP clients.
 </p>
 
 <p align="center">
@@ -75,9 +75,9 @@ The full list of 87 tools, 13 resources and 4 prompts is in [docs/tools.md](docs
 | Money | `expense_create`, `balances_get`, `settlement_preview`, `cash_payment_record` |
 | Fixed costs | `recurring_list`, `recurring_create`, `recurring_advance` |
 | Shopping and supplies | `shopping_add`, `shopping_set_bought`, `shopping_update`, `inventory_consume` |
-| Cleaning rota | `chores_list`, `chore_complete`, `chore_complete_undo`, `chore_swap_request`, `absence_create` |
-| Noticeboard and chat | `note_create`, `note_comment`, `chat_send`, `chat_unread` |
-| Calendar | `events_list`, `event_create`, `event_update`, `event_occurrence_change` |
+| Cleaning rota | `chores_list`, `chore_get`, `chore_complete`, `chore_complete_undo` |
+| Noticeboard and chat | `note_create`, `chore_swap_request`, `note_comment`, `chat_send`, `chat_unread` |
+| Calendar and absences | `events_list`, `event_create`, `event_occurrence_change`, `absence_create` |
 | Flatmates and imports | `invite_create`, `invite_email`, `import_preview`, `import_undo` |
 | Prompts | `daily_brief`, `shopping_run`, `payment_reminder`, `settlement_plan` |
 
@@ -112,8 +112,9 @@ membership checks as for your phone.
 Each tool calls exactly one route of the app API. Money is in integer cents, every write carries
 an idempotency key so a retried request is never booked twice, and writes that could race with a
 flatmate fail instead of overwriting (`chore_occurrence_changed`, `shopping_item_changed`). Errors
-come back as a fixed code such as `ManaWG request failed: splits_sum_mismatch`, never with
-upstream text or credentials.
+come back as a code from a fixed allowlist, such as `ManaWG request failed: splits_sum_mismatch`.
+Only validation errors add a truncated field-level detail. Upstream messages, URLs and credentials
+are never forwarded.
 
 ## Self-host
 
@@ -125,7 +126,7 @@ git clone https://github.com/Abuarchiv/manawg-mcp.git && cd manawg-mcp
 pnpm install && pnpm build
 mkdir -p ~/.config/manawg-mcp && cp .env.example ~/.config/manawg-mcp/env
 chmod 600 ~/.config/manawg-mcp/env        # then fill in your instance and account
-claude mcp add manawg --env-file ~/.config/manawg-mcp/env -- node "$(pwd)/dist/index.js"
+claude mcp add manawg -- node --env-file="$HOME/.config/manawg-mcp/env" "$(pwd)/dist/index.js"
 ```
 
 Or with Docker: `ghcr.io/abuarchiv/manawg-mcp` (`linux/amd64`, `linux/arm64`).
@@ -143,7 +144,6 @@ pnpm typecheck   # tsc --noEmit
 pnpm test        # Vitest: flows against a stateful stub app, API surface, OAuth
 pnpm build       # compile to dist/
 pnpm smoke       # stdio handshake against dist/
-pnpm inspector   # MCP Inspector against dist/index.js
 pnpm live-check  # read-only probes against a real instance (credentials required)
 ```
 

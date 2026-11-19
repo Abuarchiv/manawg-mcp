@@ -1,8 +1,8 @@
 import { z } from 'zod';
-import { imageUrl, isoDateTime, uuid } from './shared.js';
+import { imageUrl, isoDateTime, uuid, withoutId } from './shared.js';
 import { defineTool } from './types.js';
 
-const content = z.string().trim().min(1).max(2000);
+const noteContent = z.string().trim().min(1).max(2000);
 const commentContent = z.string().trim().min(1).max(600);
 const noteKind = z.enum(['info', 'question', 'problem', 'request', 'decision']);
 const reaction = z.enum(['seen', 'take', 'ok']);
@@ -33,7 +33,7 @@ export const noteTools = [
       'Posts a new message to the flat noticeboard as the signed-in member and sends a push notification to the other members. Use it for announcements, questions or requests to the whole flat; to ask for a chore to be taken over use chore_swap_request, to reply on an existing post use note_comment, and for the live conversation use chat_send. The answer holds the created announcement and a warning when the push delivery could not be confirmed. An imageUrl that is not an app-issued upload of this flat fails with image_invalid; an upload that was deleted fails with image_removed.',
     method: 'POST',
     input: z.strictObject({
-      content: content.describe('Text of the post, shown as written on the noticeboard.'),
+      content: noteContent.describe('Text of the post, shown as written on the noticeboard.'),
       kind: noteKind
         .default('info')
         .describe(
@@ -54,7 +54,7 @@ export const noteTools = [
     method: 'POST',
     input: z.strictObject({
       choreId: uuid.describe('Id of the chore to swap, from chores_list.'),
-      content: content.describe(
+      content: noteContent.describe(
         'Text of the request, for example why you cannot do the chore. Shown as written on the noticeboard.',
       ),
       kind: noteKind
@@ -68,37 +68,47 @@ export const noteTools = [
   }),
   defineTool({
     name: 'note_update',
-    title: 'Change a post',
+    title: 'Edit a post',
     description:
       'Edits an existing noticeboard post: resolve or reopen it, pin or unpin it, change its kind, or rewrite its text. Send only the fields you want to change. content, pinned and kind may only be changed by the post author or an admin (otherwise 403 not_owner); content only on manually written posts (otherwise 403 content_locked). status may only be changed by the author, an admin, or a member who has set a take reaction on the post (otherwise 403 status_change_not_allowed). Resolving a post pushes a notification to the author and the takers. Pass expectedUpdatedAt to guard against concurrent edits: if the post changed meanwhile the call fails with 409 announcement_changed, so read notes_list again before retrying. To remove a post use note_delete; to take it on use note_react.',
     method: 'PATCH',
-    input: z.strictObject({
-      id: uuid.describe('Id of the post to change, from notes_list.'),
-      status: z
-        .enum(['open', 'resolved'])
-        .optional()
-        .describe('Set resolved to close the post or open to reopen it. Omit to leave unchanged.'),
-      pinned: z
-        .boolean()
-        .optional()
-        .describe(
-          'true pins the post to the top of the board, false unpins it. Omit to leave unchanged.',
-        ),
-      kind: noteKind.optional().describe('New type of the post. Omit to leave unchanged.'),
-      content: content
-        .optional()
-        .describe('New text, replacing the old text completely. Omit to leave unchanged.'),
-      expectedUpdatedAt: isoDateTime
-        .optional()
-        .describe(
-          'The updatedAt of this post as last read from notes_list (ISO 8601 with offset). If the post changed since, the update is rejected with announcement_changed. Omit to skip the check.',
-        ),
-    }),
+    input: z
+      .strictObject({
+        id: uuid.describe('Id of the post to change, from notes_list.'),
+        status: z
+          .enum(['open', 'resolved'])
+          .optional()
+          .describe(
+            'Set resolved to close the post or open to reopen it. Omit to leave unchanged.',
+          ),
+        pinned: z
+          .boolean()
+          .optional()
+          .describe(
+            'true pins the post to the top of the board, false unpins it. Omit to leave unchanged.',
+          ),
+        kind: noteKind.optional().describe('New type of the post. Omit to leave unchanged.'),
+        content: noteContent
+          .optional()
+          .describe('New text, replacing the old text completely. Omit to leave unchanged.'),
+        expectedUpdatedAt: isoDateTime
+          .optional()
+          .describe(
+            'The updatedAt of this post as last read from notes_list (ISO 8601 with offset). If the post changed since, the update is rejected with announcement_changed. Omit to skip the check.',
+          ),
+      })
+      .refine(
+        (input) =>
+          [input.status, input.pinned, input.kind, input.content].some(
+            (field) => field !== undefined,
+          ),
+        {
+          message: 'Send at least one of status, pinned, kind and content',
+          path: ['status'],
+        },
+      ),
     path: (input) => ['announcements', input.id],
-    body: (input) => {
-      const { id, ...body } = input;
-      return body;
-    },
+    body: withoutId,
   }),
   defineTool({
     name: 'note_delete',
@@ -139,7 +149,7 @@ export const noteTools = [
   }),
   defineTool({
     name: 'note_comment_delete',
-    title: 'Delete your own comment',
+    title: 'Delete a comment',
     description:
       'Permanently deletes one comment from a noticeboard post; this cannot be undone. The comment author may delete it, and so may an admin as moderation (otherwise 403 not_owner); nobody is notified. An unknown comment returns 404 comment_not_found. To delete the whole post use note_delete; to change the text instead use note_comment_update.',
     method: 'DELETE',

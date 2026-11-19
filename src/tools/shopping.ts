@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { isoDateTime, uuid } from './shared.js';
+import { isoDateTime, uuid, withoutId } from './shared.js';
 import { defineTool } from './types.js';
 
 const itemName = z
@@ -18,6 +18,14 @@ const quantity = z
   .optional()
   .describe(
     'Free-text amount shown next to the name, for example "2" or "1 kg". Omit when no amount is needed.',
+  );
+const expectedUpdatedAt = isoDateTime.describe(
+  "The item's updatedAt exactly as returned by shopping_list (ISO 8601 with offset). Guards against concurrent edits.",
+);
+const expectedBoughtAt = isoDateTime
+  .nullable()
+  .describe(
+    "The item's boughtAt exactly as returned by shopping_list, or null if it is still open. Guards against concurrent edits.",
   );
 
 export const shoppingTools = [
@@ -60,21 +68,11 @@ export const shoppingTools = [
       bought: z
         .boolean()
         .describe('true marks the item as bought by the caller; false reopens a bought item.'),
-      expectedUpdatedAt: isoDateTime.describe(
-        "The item's updatedAt exactly as returned by shopping_list (ISO 8601 with offset). Guards against concurrent edits.",
-      ),
-      expectedBoughtAt: isoDateTime
-        .nullable()
-        .describe(
-          "The item's boughtAt exactly as returned by shopping_list, or null if it is still open. Guards against concurrent edits.",
-        ),
+      expectedUpdatedAt,
+      expectedBoughtAt,
     }),
     path: (input) => ['shopping', input.id],
-    body: (input) => ({
-      bought: input.bought,
-      expectedUpdatedAt: input.expectedUpdatedAt,
-      expectedBoughtAt: input.expectedBoughtAt,
-    }),
+    body: withoutId,
   }),
   defineTool({
     name: 'shopping_update',
@@ -95,26 +93,15 @@ export const shoppingTools = [
           .describe(
             'New free-text amount, for example "2" or "1 kg". Send null or an empty string to clear it. Omit to keep the current one.',
           ),
-        expectedUpdatedAt: isoDateTime.describe(
-          "The item's updatedAt exactly as returned by shopping_list (ISO 8601 with offset). Guards against concurrent edits.",
-        ),
-        expectedBoughtAt: isoDateTime
-          .nullable()
-          .describe(
-            "The item's boughtAt exactly as returned by shopping_list, or null if it is still open. Guards against concurrent edits.",
-          ),
+        expectedUpdatedAt,
+        expectedBoughtAt,
       })
       .refine((input) => input.name !== undefined || input.quantity !== undefined, {
         message: 'Send at least one of name and quantity',
         path: ['name'],
       }),
     path: (input) => ['shopping', input.id],
-    body: (input) => ({
-      name: input.name,
-      quantity: input.quantity,
-      expectedUpdatedAt: input.expectedUpdatedAt,
-      expectedBoughtAt: input.expectedBoughtAt,
-    }),
+    body: withoutId,
   }),
   defineTool({
     name: 'shopping_remove',

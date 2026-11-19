@@ -1,28 +1,14 @@
 #!/usr/bin/env node
 // Read-only connectivity check against a real ManaWG deployment.
-// Prints status only — never credential, token or share-code values.
+// Prints status only, never credential, token or share-code values. Reads the env file given by
+// MANAWG_ENV_FILE, default ~/.config/manawg-mcp/env; variables already set in the shell win.
 
-import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createSessionController } from '../dist/auth.js';
 import { loadConfig } from '../dist/config.js';
 import { ManaWgError } from '../dist/errors.js';
 import { createManaWgClient, sessionCredentials } from '../dist/manawg-client.js';
-
-function loadEnvFile(path) {
-  try {
-    for (const line of readFileSync(path, 'utf8').split('\n')) {
-      const match = /^\s*([A-Z0-9_]+)\s*=\s*(.*)\s*$/.exec(line);
-      if (match && process.env[match[1]] === undefined) {
-        process.env[match[1]] = match[2];
-      }
-    }
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 function mask(value) {
   if (!value) {
@@ -31,14 +17,13 @@ function mask(value) {
   return `${value.slice(0, 2)}***${value.slice(-1)}`;
 }
 
-const SAFE_MESSAGES = new Set(['auth_failed', 'upstream_network_error']);
-
 function describe(error) {
   if (error instanceof ManaWgError) {
     return `code=${error.code} status=${error.status}`;
   }
-  if (error instanceof Error && SAFE_MESSAGES.has(error.message)) {
-    return `code=${error.message}`;
+  // The session controller signs in with a plain Error whose message is already safe to print.
+  if (error instanceof Error && error.message === 'auth_failed') {
+    return 'code=auth_failed';
   }
   if (error instanceof Error) {
     return `unexpected=${error.name}`;
@@ -47,7 +32,15 @@ function describe(error) {
 }
 
 const envPath = process.env.MANAWG_ENV_FILE || join(homedir(), '.config', 'manawg-mcp', 'env');
-const loaded = loadEnvFile(envPath);
+let loaded = true;
+try {
+  process.loadEnvFile(envPath);
+} catch (error) {
+  if (error.code !== 'ENOENT') {
+    throw error;
+  }
+  loaded = false;
+}
 
 let config;
 try {
@@ -62,13 +55,13 @@ if (config.auth.mode !== 'session') {
   process.exit(1);
 }
 
-console.error(`env_file: ${loaded ? 'loaded' : 'missing'} path=${envPath}`);
-console.error(`base_url: ${new URL(config.baseUrl).host}`);
-console.error(
+console.log(`env_file: ${loaded ? 'loaded' : 'missing'} path=${envPath}`);
+console.log(`base_url: ${new URL(config.baseUrl).host}`);
+console.log(
   `wg_code: ${config.defaultWgCode ? mask(config.defaultWgCode) : 'only flat of the account'}`,
 );
-console.error(`auth_mode: ${config.auth.bootstrapRefreshToken ? 'refresh_token' : 'password'}`);
-console.error(`destructive_tools: ${config.allowDestructive ? 'enabled' : 'disabled'}`);
+console.log(`auth_mode: ${config.auth.bootstrapRefreshToken ? 'refresh_token' : 'password'}`);
+console.log(`destructive_tools: ${config.allowDestructive ? 'enabled' : 'disabled'}`);
 
 const auth = createSessionController(config.auth);
 const client = createManaWgClient(config, fetch, sessionCredentials(auth));
@@ -80,7 +73,7 @@ async function reach(url, headers = {}) {
     signal: AbortSignal.timeout(15_000),
   });
   if (response.status >= 500) {
-    throw new Error(`upstream status ${response.status}`);
+    throw new ManaWgError(`upstream_http_${response.status}`, response.status);
   }
   return `status=${response.status}`;
 }
@@ -91,7 +84,7 @@ const probes = [
     'supabase_reachable',
     () => reach(`${config.auth.url}/auth/v1/health`, { apikey: config.auth.publishableKey }),
   ],
-  ['session', () => auth.cookieHeader()],
+  ['session', async () => `${(await auth.cookieHeader()).length} chars`],
   ['wg_list', () => client.call({ path: ['mine'], scope: 'account' })],
   ['wg_overview', () => client.call({ path: [] })],
   ['dashboard', () => client.call({ path: ['dashboard'] })],
@@ -110,18 +103,13 @@ let failed = false;
 for (const [name, run] of probes) {
   try {
     const result = await run();
-    const detail =
-      name === 'session'
-        ? `${String(result).length} chars`
-        : typeof result === 'string'
-          ? result
-          : `${JSON.stringify(result ?? {}).length} bytes`;
-    console.error(`${name}: ok ${detail}`);
+    const detail = typeof result === 'string' ? result : `${JSON.stringify(result).length} bytes`;
+    console.log(`${name}: ok ${detail}`);
   } catch (error) {
     failed = true;
     console.error(`${name}: failed ${describe(error)}`);
   }
 }
 
-console.error(failed ? 'live_check: FAILED' : 'live_check: OK');
+console.log(failed ? 'live_check: FAILED' : 'live_check: OK');
 process.exit(failed ? 1 : 0);

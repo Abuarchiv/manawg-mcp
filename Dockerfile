@@ -2,6 +2,7 @@
 
 FROM node:22-alpine AS build
 WORKDIR /app
+# Corepack is pinned so the pnpm download does not depend on the version bundled in the base image.
 RUN npm install -g corepack@0.36.0 --no-audit --no-fund && corepack enable
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile

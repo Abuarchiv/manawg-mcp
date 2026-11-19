@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { uuid } from './shared.js';
+import { uuid, withoutId } from './shared.js';
 import { defineTool } from './types.js';
 
 const notifyFlags = z.strictObject({
@@ -62,13 +62,15 @@ export const memberTools = [
         .int()
         .min(1)
         .max(500)
-        .default(100)
-        .describe('Page size. Moved-out members stay listed, so the roster only grows.'),
+        .optional()
+        .describe(
+          'Page size, default and maximum 500. Moved-out members stay listed, so the roster only grows.',
+        ),
       offset: z
         .number()
         .int()
         .min(0)
-        .default(0)
+        .optional()
         .describe('Number of members to skip, ordered by join date. Use with pagination.total.'),
     }),
     path: () => ['members'],
@@ -87,10 +89,11 @@ export const memberTools = [
   }),
   defineTool({
     name: 'member_update',
-    title: 'Change a member (admin, sensitive)',
+    title: 'Move a member out or back in',
     description:
       'Move a member out of the flat (active false) or bring them back (active true). Moving out is a reversible soft delete: history and balances stay, but the member drops from active rosters, loses push subscriptions and push opt-in, and their chores are unassigned and current or future absences deleted. Reactivating needs room in the flat (member_limit_reached) and, if the name was taken meanwhile, the member returns under a numbered name. Allowed for the member themselves or an admin (otherwise not_owner); an admin member cannot be deactivated (admin_required). Check open debts with member_get first. Does not rename members or change roles, and nothing is deleted permanently.',
     method: 'PATCH',
+    idempotent: true,
     gate: 'destructive',
     input: z.strictObject({
       id: uuid.describe('Id of the member to change, from members_list.'),
@@ -99,10 +102,7 @@ export const memberTools = [
         .describe('false moves the member out of the flat, true reactivates a moved-out member.'),
     }),
     path: (input) => ['members', input.id],
-    body: (input) => {
-      const { id, ...body } = input;
-      return body;
-    },
+    body: withoutId,
   }),
   defineTool({
     name: 'invite_create',
@@ -166,6 +166,7 @@ export const memberTools = [
     description:
       'Change your own notification settings in this flat: any subset of the notify* flags, pushOptIn and quiet hours; omitted fields stay as they are. Use it to mute areas or set quiet hours; to read current values call notifications_get first. Quiet hours use Europe/Berlin time and are skipped for urgent events. pushOptIn false deletes all your push subscriptions, and true does not subscribe a device (that happens in the app). Invalid quiet hours give quiet_hours_invalid. Sending an empty object changes nothing and answers ok. Affects only the calling member and notifies nobody. Cannot change other members or flat settings (see wg_update).',
     method: 'PATCH',
+    idempotent: true,
     input: notifyFlags,
     path: () => ['notifications'],
     body: (input) => input,
@@ -176,6 +177,7 @@ export const memberTools = [
     description:
       'Rename the flat. The name is the only flat setting this can change. Admins only (otherwise not_admin). The new name shows for all members immediately and can be reverted by renaming again. Does not change the share code, members or invitations. For a member moving out use member_update, for your own preferences notifications_update, to create a new flat use wg_create.',
     method: 'PATCH',
+    idempotent: true,
     gate: 'destructive',
     input: z.strictObject({
       name: z

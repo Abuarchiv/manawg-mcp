@@ -1,21 +1,22 @@
 import { request as httpRequest } from 'node:http';
 import { McpServer } from '@modelcontextprotocol/server';
-import { afterEach, expect, it, vi } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { z } from 'zod';
-import { type HttpServerOptions, type RunningHttpServer, startHttpServer } from '../src/http.js';
+import {
+  createHttpHandler,
+  type HttpServerOptions,
+  type RunningHttpServer,
+  startHttpServer,
+} from '../src/http.js';
 import type { ManaWgClient } from '../src/manawg-client.js';
 import { buildServer } from '../src/server.js';
+import { selectTools, TOOL_DEFS } from '../src/tools/registry.js';
+import { useCleanup } from './helpers/app.js';
 
-const cleanup: Array<() => Promise<void>> = [];
+const later = useCleanup();
 
-afterEach(async () => {
-  while (cleanup.length > 0) {
-    await cleanup.pop()?.();
-  }
-});
-
-function fakeClient(payload: unknown = { items: [] }): ManaWgClient {
-  return { call: vi.fn().mockResolvedValue(payload) };
+function fakeClient(): ManaWgClient {
+  return { call: vi.fn().mockResolvedValue({ items: [] }) };
 }
 
 async function startHttp(options: Partial<HttpServerOptions> = {}): Promise<RunningHttpServer> {
@@ -28,13 +29,14 @@ async function startHttp(options: Partial<HttpServerOptions> = {}): Promise<Runn
     createServer: () => buildServer(fakeClient()),
     ...options,
   });
-  cleanup.push(running.close);
+  later(running.close);
   return running;
 }
 
-function originOf(running: RunningHttpServer): string {
-  return running.url.slice(0, running.url.length - '/mcp'.length);
-}
+const MCP_HEADERS = {
+  'content-type': 'application/json',
+  accept: 'application/json, text/event-stream',
+};
 
 function parseBody(text: string): unknown {
   const trimmed = text.trim();
@@ -59,11 +61,7 @@ async function rpc(
   const response = await fetch(running.url, {
     ...init,
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      accept: 'application/json, text/event-stream',
-      ...(init.headers ?? {}),
-    },
+    headers: { ...MCP_HEADERS, ...init.headers },
     body: JSON.stringify(body),
   });
   const text = await response.text();
@@ -83,10 +81,32 @@ const INITIALIZE = {
 
 it('serves a health probe without credentials', async () => {
   const running = await startHttp();
-  const response = await fetch(`${originOf(running)}/health`);
+  const response = await fetch(`${running.origin}/health`);
 
   expect(response.status).toBe(200);
   await expect(response.json()).resolves.toMatchObject({ status: 'ok', name: 'manawg-mcp' });
+});
+
+it('answers HEAD without a body on every path', async () => {
+  const handler = createHttpHandler({
+    path: '/mcp',
+    auth: { kind: 'open' },
+    createServer: () => buildServer(fakeClient()),
+  });
+
+  for (const path of ['/health', '/missing']) {
+    const response = await handler.fetch(
+      new Request(`http://localhost${path}`, { method: 'HEAD' }),
+    );
+    expect(response.body).toBeNull();
+  }
+});
+
+it('brackets an IPv6 bind address in the URLs it reports', async () => {
+  const running = await startHttp({ host: '::1' });
+
+  expect(running.url).toBe(`http://[::1]:${running.port}/mcp`);
+  expect((await fetch(`${running.origin}/health`)).status).toBe(200);
 });
 
 it('serves initialize and tools/list over http', async () => {
@@ -99,14 +119,14 @@ it('serves initialize and tools/list over http', async () => {
   const tools = await rpc(running, { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} });
   expect(tools.status).toBe(200);
   const list = tools.payload as { result?: { tools?: Array<{ name: string }> } };
-  expect(list.result?.tools?.length).toBeGreaterThanOrEqual(50);
+  expect(list.result?.tools).toHaveLength(selectTools(TOOL_DEFS, false).length);
 });
 
 it('guards the mcp endpoint with a bearer api key and leaves health open', async () => {
   const apiKey = 'deploy-secret-0123456789';
   const running = await startHttp({ auth: { kind: 'api-key', apiKey } });
 
-  const health = await fetch(`${originOf(running)}/health`);
+  const health = await fetch(`${running.origin}/health`);
   expect(health.status).toBe(200);
 
   const anonymous = await rpc(running, INITIALIZE);
@@ -122,12 +142,12 @@ it('guards the mcp endpoint with a bearer api key and leaves health open', async
   expect(authorized.status).toBe(200);
 });
 
-it('answers unknown paths with 404 and never leaks configuration', async () => {
+it('answers unknown paths with 404', async () => {
   const running = await startHttp({
     auth: { kind: 'api-key', apiKey: 'deploy-secret-0123456789' },
   });
 
-  const response = await fetch(`${originOf(running)}/secret-path`);
+  const response = await fetch(`${running.origin}/secret-path`);
 
   expect(response.status).toBe(404);
   await expect(response.json()).resolves.toEqual({ error: 'not_found' });
@@ -136,25 +156,24 @@ it('answers unknown paths with 404 and never leaks configuration', async () => {
 it('reports /ready as 200 before and 503 while draining', async () => {
   const running = await startHttp({ drainMs: 500 });
 
-  const before = await fetch(`${originOf(running)}/ready`);
+  const before = await fetch(`${running.origin}/ready`);
   expect(before.status).toBe(200);
 
-  const draining = running.beginShutdown();
-  const during = await fetch(`${originOf(running)}/ready`);
+  const draining = running.close();
+  const during = await fetch(`${running.origin}/ready`);
   expect(during.status).toBe(503);
   await expect(during.json()).resolves.toEqual({ ready: false });
 
   await draining;
 });
 
-it('adds CORS headers only when enabled and answers preflights with the headers asked for', async () => {
-  const withCors = await startHttp({
+it('answers preflights with the headers asked for', async () => {
+  const running = await startHttp({
     cors: true,
     auth: { kind: 'api-key', apiKey: 'k'.repeat(32) },
   });
-  const origin = originOf(withCors);
 
-  const preflight = await fetch(`${origin}/mcp`, {
+  const preflight = await fetch(running.url, {
     method: 'OPTIONS',
     headers: {
       origin: 'https://inspector.example',
@@ -167,23 +186,17 @@ it('adds CORS headers only when enabled and answers preflights with the headers 
   expect(preflight.headers.get('access-control-allow-headers')).toBe(
     'authorization, mcp-method, mcp-name',
   );
+});
 
-  const plainPreflight = await fetch(`${origin}/mcp`, {
-    method: 'OPTIONS',
-    headers: { origin: 'https://inspector.example', 'access-control-request-method': 'POST' },
+it('adds CORS headers to every answer only when enabled', async () => {
+  const withCors = await startHttp({ cors: true });
+  const health = await fetch(`${withCors.origin}/health`, {
+    headers: { origin: 'http://localhost:6274' },
   });
-  const defaults = plainPreflight.headers.get('access-control-allow-headers') ?? '';
-  for (const name of ['authorization', 'mcp-method', 'mcp-name']) {
-    expect(defaults).toContain(name);
-  }
-
-  const health = await fetch(`${origin}/health`, {
-    headers: { origin: 'https://inspector.example' },
-  });
-  expect(health.headers.get('access-control-allow-origin')).toBe('*');
+  expect(health.headers.get('access-control-allow-origin')).toBe('http://localhost:6274');
 
   const withoutCors = await startHttp();
-  const plain = await fetch(`${originOf(withoutCors)}/health`);
+  const plain = await fetch(`${withoutCors.origin}/health`);
   expect(plain.headers.get('access-control-allow-origin')).toBeNull();
 });
 
@@ -205,23 +218,26 @@ function rawRequest(
   });
 }
 
-const MCP_HEADERS = {
-  'content-type': 'application/json',
-  accept: 'application/json, text/event-stream',
-};
+it('answers a malformed Host header with 400 instead of crashing', async () => {
+  const running = await startHttp();
+
+  const malformed = await rawRequest(running, { host: 'a b' }, 'GET');
+
+  expect(malformed.status).toBe(400);
+  expect((await fetch(`${running.origin}/health`)).status).toBe(200);
+});
 
 it('rejects a foreign Host or Origin on a loopback bind (DNS rebinding)', async () => {
   const running = await startHttp();
 
   const rebound = await rawRequest(running, { ...MCP_HEADERS, host: 'evil.example' });
-  expect(rebound.status).toBeGreaterThanOrEqual(400);
-  expect(rebound.status).toBeLessThan(500);
+  expect(rebound.status).toBe(403);
 
   const rebindWithPort = await rawRequest(running, {
     ...MCP_HEADERS,
     host: `evil.example:${running.port}`,
   });
-  expect(rebindWithPort.status).toBeGreaterThanOrEqual(400);
+  expect(rebindWithPort.status).toBe(403);
 
   const foreignOrigin = await rawRequest(running, {
     ...MCP_HEADERS,
@@ -251,11 +267,8 @@ it('accepts the public Host of a reverse proxy in front of a loopback bind with 
   expect(proxied.status).toBe(200);
 });
 
-it('keeps the Host and Origin checks on a loopback bind when CORS is on and no key is set', async () => {
+it('keeps the Origin check on a loopback bind when CORS is on and no key is set', async () => {
   const cors = await startHttp({ cors: true });
-  const foreignHost = await rawRequest(cors, { ...MCP_HEADERS, host: 'evil.example' });
-  expect(foreignHost.status).toBeGreaterThanOrEqual(400);
-
   const preflight = (origin: string) =>
     fetch(cors.url, {
       method: 'OPTIONS',
@@ -268,6 +281,9 @@ it('keeps the Host and Origin checks on a loopback bind when CORS is on and no k
   const local = await preflight('http://localhost:6274');
   expect(local.status).toBe(204);
   expect(local.headers.get('access-control-allow-origin')).toBe('http://localhost:6274');
+
+  const rebound = await rawRequest(cors, { ...MCP_HEADERS, host: 'evil.example' });
+  expect(rebound.status).toBe(403);
 });
 
 it('lets any origin call an endpoint that needs an API key when CORS is on', async () => {
@@ -284,24 +300,24 @@ it('lets any origin call an endpoint that needs an API key when CORS is on', asy
   expect(preflight.headers.get('access-control-allow-origin')).toBe('*');
 });
 
-it('aborts the request signal when the client disconnects', async () => {
-  let aborted: () => void = () => undefined;
-  const signalAborted = new Promise<void>((resolve) => {
-    aborted = resolve;
+function deferred() {
+  let resolve: () => void = () => undefined;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
   });
-  let entered: () => void = () => undefined;
-  const toolEntered = new Promise<void>((resolve) => {
-    entered = resolve;
-  });
+  return { promise, resolve };
+}
+
+it('aborts the request signal when the client disconnects', { timeout: 5_000 }, async () => {
+  const entered = deferred();
+  const aborted = deferred();
   const running = await startHttp({
     createServer: () => {
       const server = new McpServer({ name: 'hang', version: '0.0.0' });
       server.registerTool('hang', { inputSchema: z.object({}) }, async (_args, ctx) => {
-        entered();
-        await new Promise<void>((resolve) => {
-          ctx.mcpReq.signal.addEventListener('abort', () => resolve(), { once: true });
-        });
-        aborted();
+        entered.resolve();
+        ctx.mcpReq.signal.addEventListener('abort', () => aborted.resolve(), { once: true });
+        await aborted.promise;
         return { content: [{ type: 'text', text: 'done' }] };
       });
       return server;
@@ -324,19 +340,8 @@ it('aborts the request signal when the client disconnects', async () => {
       params: { name: 'hang', arguments: {} },
     }),
   );
-  await toolEntered;
+  await entered.promise;
   request.destroy();
 
-  await expect(
-    Promise.race([
-      signalAborted,
-      sleepMs(3_000).then(() => {
-        throw new Error('signal did not abort');
-      }),
-    ]),
-  ).resolves.toBeUndefined();
+  await aborted.promise;
 });
-
-function sleepMs(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}

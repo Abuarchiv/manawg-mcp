@@ -36,7 +36,7 @@ This Code of Conduct applies within all community spaces, and also applies when 
 
 ## Enforcement
 
-Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the community leaders responsible for enforcement by mail to info@manawg.com. If you cannot use mail, use [GitHub's private reporting form](https://github.com/Abuarchiv/manawg/security/advisories/new) and say that the report is about conduct. The project has one maintainer, so reports are answered within 7 days. All complaints will be reviewed and investigated fairly.
+Instances of abusive, harassing, or otherwise unacceptable behavior may be reported to the community leaders responsible for enforcement by mail to info@manawg.com. If you cannot use mail, use [GitHub's private reporting form](https://github.com/Abuarchiv/manawg-mcp/security/advisories/new) and say that the report is about conduct. The project has one maintainer, so reports are answered within 7 days. All complaints will be reviewed and investigated fairly.
 
 All community leaders are obligated to respect the privacy and security of the reporter of any incident.
 

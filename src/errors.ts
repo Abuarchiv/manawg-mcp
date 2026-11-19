@@ -3,7 +3,7 @@
  * bodies are never forwarded: only codes on this allowlist reach the model.
  */
 
-export const SAFE_ERROR_MESSAGE = 'ManaWG request failed';
+const SAFE_ERROR_MESSAGE = 'ManaWG request failed';
 
 /** The only validation-style code whose `details` snippet is passed through. */
 export const DETAIL_SAFE_CODE = 'validation_errors';
@@ -42,9 +42,9 @@ export const SAFE_UPSTREAM_CODES = new Set([
   'chore_not_found',
   'chore_occurrence_changed',
   'comment_invalid',
-  'completion_not_found',
   'comment_not_found',
   'completed_at_invalid',
+  'completion_not_found',
   'conflict',
   'content_invalid',
   'content_locked',
@@ -275,18 +275,14 @@ export class ManaWgError extends Error {
   constructor(
     code: string,
     status: number,
-    options: { details?: string; retryAfterSeconds?: number } = {},
+    options: { details?: string; retryAfterSeconds?: number; cause?: unknown } = {},
   ) {
-    super(`ManaWG request failed: ${code}`);
+    super(`${SAFE_ERROR_MESSAGE}: ${code}`, { cause: options.cause });
     this.name = 'ManaWgError';
     this.code = code;
     this.status = status;
-    if (options.details !== undefined) {
-      this.details = options.details;
-    }
-    if (options.retryAfterSeconds !== undefined) {
-      this.retryAfterSeconds = options.retryAfterSeconds;
-    }
+    this.details = options.details;
+    this.retryAfterSeconds = options.retryAfterSeconds;
   }
 }
 
@@ -305,7 +301,7 @@ export function describeError(error: unknown): string {
   if (!(error instanceof ManaWgError)) {
     return SAFE_ERROR_MESSAGE;
   }
-  let message = `${SAFE_ERROR_MESSAGE}: ${error.code}`;
+  let message = error.message;
   const next = NEXT_STEP[error.code];
   if (next) {
     message = `${message} (${next})`;
@@ -319,14 +315,21 @@ export function describeError(error: unknown): string {
   return message;
 }
 
-/** One server-side log line for a failed tool call; carries codes and names only, never upstream bodies. */
-export function describeFailure(tool: string, error: unknown): string {
+export function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** One server-side log line for a failed tool call or resource read; codes and names only, never upstream bodies. */
+export function describeFailure(source: string, error: unknown): string {
   if (error instanceof ManaWgError) {
     const retry =
       error.retryAfterSeconds !== undefined ? ` retry_after_s=${error.retryAfterSeconds}` : '';
-    return `tool_error tool=${tool} code=${error.code} status=${error.status}${retry}`;
+    // The cause stays out of the model-facing message; the operator needs it to tell a bad
+    // password from an outage.
+    const cause = error.cause === undefined ? '' : ` cause=${errorMessage(error.cause)}`;
+    return `failure source=${source} code=${error.code} status=${error.status}${retry}${cause}`;
   }
   const name = error instanceof Error ? error.name : typeof error;
   const stack = error instanceof Error && error.stack ? `\n${error.stack}` : '';
-  return `tool_error tool=${tool} kind=internal name=${name}${stack}`;
+  return `failure source=${source} kind=internal name=${name}${stack}`;
 }

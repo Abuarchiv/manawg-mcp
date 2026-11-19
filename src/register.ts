@@ -1,15 +1,21 @@
 import { type McpServer, ResourceTemplate } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { SHARE_CODE_PATTERN } from './config.js';
-import { describeError, describeFailure } from './errors.js';
-import { isUuid } from './ids.js';
+import { describeError, describeFailure, ManaWgError } from './errors.js';
 import type { ManaWgClient, WgRequest } from './manawg-client.js';
 import { capPayload, DEFAULT_MAX_BYTES, isRecord, type PayloadLimits } from './payload.js';
 import type { PromptDef } from './prompts.js';
-import type { ResourceDef, ResourceTemplateDef } from './resources.js';
+import { ENTITY_LIST_LIMIT, type ResourceDef, type ResourceTemplateDef } from './resources.js';
+import { uuid } from './tools/shared.js';
 import type { ToolDef } from './tools/types.js';
 
 const JSON_MIME = 'application/json';
+
+/** Logs the cause server-side and returns the text the model is allowed to see. */
+function reportFailure(source: string, error: unknown): string {
+  console.error(describeFailure(source, error));
+  return describeError(error);
+}
 
 /** Fetches a route and returns it as a bounded JSON resource body, with sanitized failures. */
 async function readJsonResource(
@@ -21,11 +27,9 @@ async function readJsonResource(
   try {
     const payload = await client.call(request);
     const capped = capPayload(payload, { maxBytes: DEFAULT_MAX_BYTES, ...limits });
-    return {
-      contents: [{ uri: uri.href, mimeType: JSON_MIME, text: JSON.stringify(capped.payload) }],
-    };
+    return { contents: [{ uri: uri.href, mimeType: JSON_MIME, text: JSON.stringify(capped) }] };
   } catch (error) {
-    throw new Error(describeError(error));
+    throw new Error(reportFailure(`resources/read ${uri.href}`, error));
   }
 }
 
@@ -34,23 +38,21 @@ export function registerResource(server: McpServer, client: ManaWgClient, def: R
     def.name,
     def.uri,
     { title: def.title, description: def.description, mimeType: JSON_MIME },
-    (uri) =>
+    (uri, ctx) =>
       readJsonResource(
         client,
         {
           method: 'GET',
           path: def.path,
-          ...(def.scope ? { scope: def.scope } : {}),
-          ...(def.query ? { query: def.query } : {}),
+          scope: def.scope,
+          query: def.query,
+          signal: ctx.mcpReq.signal,
         },
         uri,
         def.limits,
       ),
   );
 }
-
-/** Resources listed per template: enough to pick from, cheap to fetch on every resources/list. */
-const ENTITY_LIST_LIMIT = 50;
 
 type EntityRef = { id: string; label: string };
 
@@ -64,16 +66,18 @@ async function listEntities(client: ManaWgClient, def: ResourceTemplateDef): Pro
     const payload = await client.call({
       method: 'GET',
       path: def.list.path,
-      ...(def.list.query ? { query: def.list.query } : {}),
+      query: def.list.query,
     });
     const items = isRecord(payload) ? payload[def.list.key] : undefined;
     if (!Array.isArray(items)) return [];
     return items.flatMap((item) => {
-      if (!isRecord(item) || !isUuid(item.id)) return [];
+      const id = isRecord(item) ? uuid.safeParse(item.id) : undefined;
+      if (!isRecord(item) || !id?.success) return [];
       const label = item[def.list.label];
-      return [{ id: item.id, label: typeof label === 'string' && label ? label : item.id }];
+      return [{ id: id.data, label: typeof label === 'string' && label ? label : id.data }];
     });
-  } catch {
+  } catch (error) {
+    console.error(describeFailure(`resources/list ${def.name}`, error));
     return [];
   }
 }
@@ -101,12 +105,16 @@ export function registerEntityResource(
       },
     }),
     { title: def.title, description: def.description, mimeType: JSON_MIME },
-    (uri, variables) => {
-      const id = variables.id;
-      if (!isUuid(id)) {
-        throw new Error(describeError(undefined));
+    (uri, variables, ctx) => {
+      const id = uuid.safeParse(variables.id);
+      if (!id.success) {
+        throw new Error(describeError(new ManaWgError('id_invalid', 400)));
       }
-      return readJsonResource(client, { method: 'GET', path: def.path(id) }, uri);
+      return readJsonResource(
+        client,
+        { method: 'GET', path: def.path(id.data), signal: ctx.mcpReq.signal },
+        uri,
+      );
     },
   );
 }
@@ -121,7 +129,7 @@ export function registerPrompt(server: McpServer, def: PromptDef): void {
           role: 'user' as const,
           content: {
             type: 'text' as const,
-            text: def.render((args ?? {}) as Record<string, string | undefined>),
+            text: def.render(args),
           },
         },
       ],
@@ -170,26 +178,25 @@ export function registerTool(server: McpServer, client: ManaWgClient, def: ToolD
       const request: WgRequest = {
         // A client that cancels or disconnects stops the upstream call and its retries.
         signal: ctx.mcpReq.signal,
-        ...(wgCode ? { wgCode } : {}),
+        wgCode,
         method: def.method,
         path: def.path(args),
-        ...(def.scope ? { scope: def.scope } : {}),
-        ...(def.query ? { query: def.query(args) } : {}),
-        ...(def.body ? { body: def.body(args) } : {}),
+        scope: def.scope,
+        query: def.query?.(args),
+        body: def.body?.(args),
       };
       try {
         const upstream = await client.call(request);
         const shaped = def.transform ? def.transform(args, upstream) : upstream;
-        const { payload } = capPayload(shaped, { maxBytes: DEFAULT_MAX_BYTES });
+        const payload = capPayload(shaped, { maxBytes: DEFAULT_MAX_BYTES });
         return {
           content: [{ type: 'text' as const, text: JSON.stringify(payload) }],
           ...(isRecord(payload) ? { structuredContent: payload } : {}),
         };
       } catch (error) {
-        console.error(describeFailure(def.name, error));
         return {
           isError: true,
-          content: [{ type: 'text' as const, text: describeError(error) }],
+          content: [{ type: 'text' as const, text: reportFailure(def.name, error) }],
         };
       }
     },

@@ -43,6 +43,9 @@ You need Node.js 22 and pnpm 9 to run from source.
    pnpm live-check
    ```
 
+   It reads `~/.config/manawg-mcp/env`, or the file named by `MANAWG_ENV_FILE`. Variables already
+   set in the shell take precedence.
+
 Unit tests, lint and typecheck never need credentials.
 
 ### Start
@@ -57,7 +60,7 @@ node dist/index.js
 Claude Code:
 
 ```bash
-claude mcp add manawg --env-file ~/.config/manawg-mcp/env -- node "$(pwd)/dist/index.js"
+claude mcp add manawg -- node --env-file="$HOME/.config/manawg-mcp/env" "$(pwd)/dist/index.js"
 ```
 
 ## Environment
@@ -79,14 +82,13 @@ claude mcp add manawg --env-file ~/.config/manawg-mcp/env -- node "$(pwd)/dist/i
 | `MANAWG_HTTP_HOST` | no | Bind address for `http` (default `127.0.0.1`, `0.0.0.0` in the container) |
 | `MANAWG_HTTP_PORT` | no | Port for `http` (default `8080`) |
 | `MANAWG_HTTP_PATH` | no | MCP endpoint path for `http` (default `/mcp`) |
-| `MANAWG_HTTP_API_KEY` | no | Bearer token, minimum 16 characters; required when HTTP binds beyond loopback |
+| `MANAWG_HTTP_API_KEY` | no | Bearer token, minimum 16 characters. Required in session mode when HTTP binds beyond loopback; must not be set with `MANAWG_AUTH=oauth` |
 | `MANAWG_HTTP_CORS` | no | `1` lets browser clients call the endpoint (default off). With an API key or OAuth any origin may; keyless on loopback only `localhost`, `127.0.0.1` and `[::1]` origins |
 | `MANAWG_DRAIN_MS` | no | Milliseconds `/ready` reports `503` before shutdown (default 5000) |
 
 For stdio, only one sign-in mode has to be filled in by hand. For HTTP on a non-loopback host in
 session mode, also set a persistent `MANAWG_HTTP_API_KEY` (for example, generate one with
-`openssl rand -hex 32`). `MANAWG_MEMBER_ID`, `MANAWG_MEMBER_TOKEN` and `MANAWG_IDENTITY_CACHE`
-from older versions are ignored: the app derives the acting member from the session.
+`openssl rand -hex 32`).
 
 ## How sign-in works
 
@@ -137,8 +139,9 @@ Limits worth knowing:
 - `MANAWG_PUBLIC_URL` must end in `MANAWG_HTTP_PATH`, and `MANAWG_WG_CODE` is refused: there is no
   default flat for many users. `manawg://current/*` resources therefore need an account with one
   flat; tools take `wgCode`.
-- Each HTTP request builds its own client, so a tool call without `wgCode` costs one extra
-  `GET /api/wg/mine`.
+- Each HTTP request builds its own client, but the lookup of a user's only flat is cached for a
+  minute, so tool calls without `wgCode` cost at most one extra `GET /api/wg/mine` per user per
+  minute.
 - Browser clients (MCP Inspector) also need `MANAWG_HTTP_CORS=1`.
 - A JWKS that cannot be loaded answers `500 server_error`, not `401`, so clients keep their token.
 
@@ -154,7 +157,7 @@ node dist/index.js
 - MCP endpoint `http://<host>:8080/mcp` (streamable HTTP, 2025-era requests served stateless),
   reachable by any client that supports the HTTP transport with the header
   `Authorization: Bearer <MANAWG_HTTP_API_KEY>`.
-- `GET /health` answers `{"status":"ok",…}` without credentials — the probe for load balancers and
+- `GET /health` answers `{"status":"ok",…}` without credentials, the probe for load balancers and
   the container `HEALTHCHECK`. `GET /ready` returns `200` while serving and `503` as soon as
   `SIGTERM`/`SIGINT` arrives, for the `MANAWG_DRAIN_MS` window, then the listener closes. Everything
   else is `404`; an MCP request without the bearer token is `401`.
@@ -216,6 +219,7 @@ with `MANAWG_TRANSPORT=http`.
 
 - Keep credentials out of git and logs; only `.env.example` placeholders are committed.
 - The credential file and the session cache stay mode `0600` outside the repo.
-- Error text is generated locally from an allowlist — upstream response bodies are not forwarded.
+- Error codes come from a fixed allowlist. Only validation errors add a truncated field-level
+  detail. Upstream messages, URLs and credentials are never forwarded.
 
 Report vulnerabilities privately, see [SECURITY.md](../SECURITY.md).

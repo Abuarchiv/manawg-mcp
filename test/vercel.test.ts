@@ -34,6 +34,10 @@ it('answers an unauthenticated MCP call with 401 and the resource metadata link'
   expect(response.headers.get('www-authenticate')).toContain(
     'resource_metadata="https://mcp.manawg.example/.well-known/oauth-protected-resource/mcp"',
   );
+});
+
+it('serves the health probe in OAuth mode', async () => {
+  const { handleRequest } = await loadEntry(OAUTH_ENV);
 
   const health = await handleRequest(new Request('https://mcp.manawg.example/health'));
   expect(health.status).toBe(200);

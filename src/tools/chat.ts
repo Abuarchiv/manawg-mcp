@@ -2,7 +2,8 @@ import { z } from 'zod';
 import { uuid } from './shared.js';
 import { defineTool } from './types.js';
 
-const body = z.string().trim().min(1).max(4000);
+const messageBody = z.string().trim().min(1).max(4000);
+const emoji = z.string().trim().min(1).max(16);
 
 export const chatTools = [
   defineTool({
@@ -32,10 +33,10 @@ export const chatTools = [
     name: 'chat_send',
     title: 'Send a chat message',
     description:
-      'Posts a new text message to the flat chat as the signed-in member; use chat_edit to change a message you already sent. Notifies the other members, and anyone mentioned gets a separate mention notification, so confirm the wording with the user first. Text only, no images; a blank body gives empty_message. A reply target that is missing or deleted gives reply_to_not_found. Each call creates a new message, so do not retry blindly. The result returns the created message and the mentioned member ids.',
+      'Posts a new text message to the flat chat as the signed-in member; use chat_edit to change a message you already sent. Notifies the other members, and anyone mentioned gets a separate mention notification, so confirm the wording with the user first. Text only, no images; a blank body gives empty_message. A reply target that is missing or deleted gives reply_to_not_found. Each call creates a new message, so do not retry blindly. Returns the created message, the mentioned member ids and a warning that is null unless the push delivery could not be confirmed.',
     method: 'POST',
     input: z.strictObject({
-      body: body.describe(
+      body: messageBody.describe(
         'Message text, trimmed, up to 4000 characters. Write "@Name" with the exact member name to mention someone.',
       ),
       replyToMessageId: uuid
@@ -62,7 +63,7 @@ export const chatTools = [
     method: 'PATCH',
     input: z.strictObject({
       id: uuid.describe('Id of your own message to edit, from chat_messages or chat_send.'),
-      body: body.describe(
+      body: messageBody.describe(
         'New message text that fully replaces the old one, trimmed, up to 4000 characters.',
       ),
     }),
@@ -75,16 +76,12 @@ export const chatTools = [
     description:
       'Adds your emoji reaction to any message in the flat chat; you can add several different emojis to one message. Each member holds a given emoji at most once per message, so an emoji you already set stays as it is. Does not change or post message text. Returns ok. Only a single emoji (one pictograph, flag or keycap, with skin-tone or joiner sequences counting as one) is accepted, otherwise emoji_invalid; an unknown message gives message_not_found and a deleted one 409 message_deleted. To take a reaction back use chat_unreact; to write a message use chat_send.',
     method: 'POST',
+    idempotent: true,
     input: z.strictObject({
       id: uuid.describe('Id of the message to react to, from chat_messages.'),
-      emoji: z
-        .string()
-        .trim()
-        .min(1)
-        .max(16)
-        .describe(
-          'The reaction: one emoji, sent as the emoji character itself, not a name or shortcode like :thumbsup:. Pass the same string to chat_unreact to remove it.',
-        ),
+      emoji: emoji.describe(
+        'The reaction: one emoji, sent as the emoji character itself, not a name or shortcode like :thumbsup:. Pass the same string to chat_unreact to remove it.',
+      ),
     }),
     path: (input) => ['chat', 'messages', input.id, 'reactions'],
     body: (input) => ({ emoji: input.emoji }),
@@ -95,14 +92,12 @@ export const chatTools = [
     description:
       "Removes your own emoji reaction from a message; other members' reactions stay. Removing a reaction you never set changes nothing, so repeating the call is safe. An unknown message gives message_not_found and a deleted one 409 message_deleted. To add a reaction use chat_react.",
     method: 'DELETE',
+    idempotent: true,
     input: z.strictObject({
       id: uuid.describe('Id of the message the reaction is on, from chat_messages.'),
-      emoji: z
-        .string()
-        .trim()
-        .min(1)
-        .max(16)
-        .describe('The emoji of your reaction to remove, exactly as it was added with chat_react.'),
+      emoji: emoji.describe(
+        'The emoji of your reaction to remove, exactly as it was added with chat_react.',
+      ),
     }),
     path: (input) => ['chat', 'messages', input.id, 'reactions'],
     query: (input) => ({ emoji: input.emoji }),
@@ -113,6 +108,7 @@ export const chatTools = [
     description:
       'Records that the signed-in member has read the chat up to a message, which lowers the chat_unread count and updates the read position other members see in chat_messages. The marker only moves forward: an older message id is ignored, and the response says whether the marker moved. An id that is not in this flat gives message_not_found. Use this after reading with chat_messages; it does not read or send anything.',
     method: 'POST',
+    idempotent: true,
     input: z.strictObject({
       lastReadMessageId: uuid
         .nullable()
@@ -137,7 +133,7 @@ export const chatTools = [
     name: 'chat_delete',
     title: 'Delete a chat message',
     description:
-      'Permanently deletes a chat message for everyone: its text is erased and cannot be restored. Only the author or a flat admin may delete, anyone else gets 403 not_owner; an unknown id gives message_not_found. Returns deleted: true; the deletion is recorded in the audit log, and an attached image is queued for removal unless the flat still uses it elsewhere. To correct a typo use chat_edit instead. Only available when destructive tools are enabled on the server.',
+      'Permanently deletes a chat message for everyone: its text is erased and cannot be restored. Only the author or a flat admin may delete, anyone else gets 403 not_owner; an unknown id gives message_not_found. Returns deleted: true. To correct a typo use chat_edit instead.',
     method: 'DELETE',
     gate: 'destructive',
     input: z.strictObject({

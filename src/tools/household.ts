@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { uuid } from './shared.js';
 import { defineTool } from './types.js';
 
 const importSource = z.enum([
@@ -90,7 +91,7 @@ export const householdTools = [
         .min(1)
         .describe('Same unmodified string as in the import_preview call; it is parsed again.'),
       memberMapping: z
-        .record(z.string(), z.uuid().nullable())
+        .record(z.string(), uuid.nullable())
         .describe(
           'Complete mapping from every name in the file to a member id from members_list or import_preview members, or null for rows to leave out. Start from the memberMapping returned by import_preview; unmapped names fail with mapping_incomplete.',
         ),
@@ -133,7 +134,7 @@ export const householdTools = [
     method: 'DELETE',
     gate: 'destructive',
     input: z.strictObject({
-      id: z.uuid().describe('The importId returned by import_commit, or an id from imports_list.'),
+      id: uuid.describe('The importId returned by import_commit, or an id from imports_list.'),
     }),
     path: (input) => ['imports', input.id],
   }),

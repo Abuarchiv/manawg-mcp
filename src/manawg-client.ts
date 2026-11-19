@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { SessionController } from './auth.js';
 import { type AppConfig, SHARE_CODE_PATTERN } from './config.js';
 import { DETAIL_SAFE_CODE, isSafeCode, ManaWgError } from './errors.js';
+import { isRecord } from './payload.js';
 
 export type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'DELETE';
 
@@ -27,12 +28,12 @@ export type ManaWgClient = {
 };
 
 /** How a request proves who it acts for. */
-export type Credentials = {
+type Credentials = {
   apply(headers: Headers): Promise<void>;
   /** Takes up credential rotations the app returns (`Set-Cookie`). */
   ingest?(response: Response): Promise<void>;
-  /** Drops cached credentials after a 401; returns true when a fresh attempt can succeed. */
-  invalidate?(): boolean;
+  /** Drops cached credentials after a 401 so the next `apply` signs in again. */
+  invalidate?(): void;
   /** Verified identity of the user these credentials act for; lets per-request clients share lookups. */
   subject?: string;
 };
@@ -44,10 +45,7 @@ export function sessionCredentials(session: SessionController): Credentials {
       headers.set('cookie', await session.cookieHeader());
     },
     ingest: (response) => session.ingest(response),
-    invalidate: () => {
-      session.invalidate();
-      return true;
-    },
+    invalidate: () => session.invalidate(),
   };
 }
 
@@ -64,24 +62,13 @@ export function bearerCredentials(token: string, subject?: string): Credentials 
   };
 }
 
-/**
- * A 401 means the session is gone only for `auth_required`. `not_a_member` and
- * `member_deactivated` also come as 401, but they answer for the flat, not the session.
- */
-const AUTH_RETRY_CODES = new Set(['auth_required']);
-
 /** 429 plus the transient server failures worth another attempt. */
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
 const DEFAULT_RETRY_DELAYS_MS = [200, 800];
 /** Longer rate limits are surfaced instead of slept out inside a tool call. */
-const DEFAULT_MAX_AUTO_RETRY_DELAY_MS = 2_000;
+const MAX_AUTO_RETRY_DELAY_MS = 2_000;
 /** Everything one tool call may spend, retries and the flat lookup included (hosted limit: 60 s). */
 const CALL_DEADLINE_MS = 45_000;
-
-export type ClientRetryOptions = {
-  retryDelaysMs?: number[];
-  maxAutoRetryDelayMs?: number;
-};
 
 function truncate(value: string): string {
   return value.length > 400 ? `${value.slice(0, 400)}…` : value;
@@ -98,7 +85,7 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
       resolve();
     };
     const timer = setTimeout(done, ms);
-    timer.unref?.();
+    timer.unref();
     signal.addEventListener('abort', done, { once: true });
   });
 }
@@ -120,8 +107,7 @@ function isGuardedUpdate(request: WgRequest): boolean {
   const body = request.body;
   return (
     request.method === 'PATCH' &&
-    typeof body === 'object' &&
-    body !== null &&
+    isRecord(body) &&
     Object.keys(body).some((name) => name.startsWith('expected'))
   );
 }
@@ -144,14 +130,13 @@ function retryAfterSeconds(response: Response): number | undefined {
 
 /** Maps an error response to an allowlisted code, falling back to a status-derived one. */
 function safeCode(payload: unknown, status: number): string {
-  if (typeof payload === 'object' && payload !== null) {
-    const record = payload as { code?: unknown; error?: unknown };
-    if (record.code !== undefined) {
-      if (isSafeCode(record.code)) {
-        return record.code;
+  if (isRecord(payload)) {
+    if (payload.code !== undefined) {
+      if (isSafeCode(payload.code)) {
+        return payload.code;
       }
-    } else if (isSafeCode(record.error)) {
-      return record.error;
+    } else if (isSafeCode(payload.error)) {
+      return payload.error;
     }
   }
   if (status === 401) {
@@ -180,10 +165,10 @@ function jsonResponse(body: unknown): Response {
 }
 
 function validationDetails(payload: unknown): string | undefined {
-  if (typeof payload !== 'object' || payload === null) {
+  if (!isRecord(payload)) {
     return undefined;
   }
-  const details = (payload as { details?: unknown }).details;
+  const { details } = payload;
   if (details === undefined || details === null) {
     return undefined;
   }
@@ -191,24 +176,35 @@ function validationDetails(payload: unknown): string | undefined {
   return text && text !== '{}' ? truncate(text) : undefined;
 }
 
-function isJsonResponse(response: Response): boolean {
-  const type = response.headers.get('content-type') ?? '';
-  return type === '' || /\bjson\b/i.test(type);
+/** Reads a successful body: JSON, an empty body as `{}`, anything else as `{ contentType, content }`. */
+async function decodeSuccess(response: Response): Promise<unknown> {
+  const contentType = response.headers.get('content-type');
+  let text: string;
+  try {
+    text = await response.text();
+  } catch {
+    throw new ManaWgError('invalid_response', response.status);
+  }
+  // The CSV export is the one non-JSON body; a missing content type is read as JSON.
+  if (contentType && !/\bjson\b/i.test(contentType)) {
+    return { contentType, content: text };
+  }
+  if (text === '') {
+    return {};
+  }
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new ManaWgError('invalid_response', response.status);
+  }
 }
 
-/**
- * Turns a response into its payload, or throws a sanitized `ManaWgError`.
- * Successful non-JSON bodies (the CSV export) come back as `{ contentType, content }`.
- */
+/** Turns a response into its payload, or throws a sanitized `ManaWgError`. */
 async function decode(response: Response): Promise<unknown> {
-  if (response.ok && response.status !== 204 && !isJsonResponse(response)) {
-    const content = await response.text().catch(() => '');
-    return { contentType: response.headers.get('content-type') ?? 'text/plain', content };
+  if (response.ok) {
+    return decodeSuccess(response);
   }
   const payload = await response.json().catch(() => undefined);
-  if (response.ok) {
-    return payload === undefined || response.status === 204 ? {} : payload;
-  }
   const code = safeCode(payload, response.status);
   const options: { details?: string; retryAfterSeconds?: number } = {};
   if (code === DETAIL_SAFE_CODE) {
@@ -217,13 +213,18 @@ async function decode(response: Response): Promise<unknown> {
       options.details = details;
     }
   }
-  if (response.status === 429) {
+  if (response.status === 429 || response.status === 503) {
     const seconds = retryAfterSeconds(response);
     if (seconds !== undefined) {
       options.retryAfterSeconds = seconds;
     }
   }
   throw new ManaWgError(code, response.status, options);
+}
+
+/** Drops an answer that will not be read, so its connection can be reused. */
+async function discard(response: Response): Promise<void> {
+  await response.body?.cancel().catch(() => undefined);
 }
 
 async function peekJson(response: Response): Promise<unknown> {
@@ -234,6 +235,7 @@ async function peekJson(response: Response): Promise<unknown> {
   }
 }
 
+/** The account's only flat; joining or creating another one must not keep it valid long. */
 const ONLY_WG_TTL_MS = 60_000;
 const MAX_SHARED_ONLY_WG = 500;
 
@@ -246,14 +248,11 @@ const sharedOnlyWg = new Map<string, OnlyWgEntry>();
 const MEMBERSHIP_GONE_CODES = new Set(['not_a_member', 'member_deactivated', 'wg_not_found']);
 
 function onlyWgCode(payload: unknown): string {
-  const wgs = (payload as { wgs?: unknown } | undefined)?.wgs;
-  const codes = Array.isArray(wgs)
-    ? wgs
-        .map((wg) => (wg as { code?: unknown } | null)?.code)
-        .filter((code): code is string => typeof code === 'string')
-    : [];
-  if (codes.length === 1 && codes[0]) {
-    return codes[0];
+  const wgs = isRecord(payload) && Array.isArray(payload.wgs) ? payload.wgs : [];
+  const codes = wgs.flatMap((wg) => (isRecord(wg) && typeof wg.code === 'string' ? [wg.code] : []));
+  const [code] = codes;
+  if (code && codes.length === 1) {
+    return code;
   }
   throw new ManaWgError(codes.length === 0 ? 'no_wg_membership' : 'wg_code_required', 400);
 }
@@ -262,11 +261,9 @@ export function createManaWgClient(
   config: Pick<AppConfig, 'baseUrl' | 'origin' | 'timeoutMs' | 'defaultWgCode'>,
   fetchImpl: typeof fetch = fetch,
   credentials?: Credentials,
-  retryOptions: ClientRetryOptions = {},
+  { retryDelaysMs = DEFAULT_RETRY_DELAYS_MS }: { retryDelaysMs?: number[] } = {},
 ): ManaWgClient {
-  const retryDelaysMs = retryOptions.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
-  const maxAutoRetryDelayMs = retryOptions.maxAutoRetryDelayMs ?? DEFAULT_MAX_AUTO_RETRY_DELAY_MS;
-  /** The account's only flat; joining or creating another one must not keep it valid long. */
+  /** Per-user cache when shared across clients, per-client otherwise. */
   const onlyWgStore = credentials?.subject ? sharedOnlyWg : new Map<string, OnlyWgEntry>();
   const onlyWgKey = `${config.baseUrl}\n${credentials?.subject ?? ''}`;
 
@@ -284,12 +281,16 @@ export function createManaWgClient(
 
   /** Milliseconds to wait before the next attempt, or undefined to give up. */
   function nextDelay(response: Response, fallbackMs: number): number | undefined {
-    if (response.status === 429) {
-      const seconds = retryAfterSeconds(response);
-      const delay = seconds === undefined ? fallbackMs : seconds * 1000;
-      return delay <= maxAutoRetryDelayMs ? delay : undefined;
+    if (!RETRYABLE_STATUS.has(response.status)) {
+      return undefined;
     }
-    return RETRYABLE_STATUS.has(response.status) ? fallbackMs : undefined;
+    // A 429 and a 503 `busy_retry` say how long to wait; other 5xx carry no hint.
+    const seconds =
+      response.status === 429 || response.status === 503 ? retryAfterSeconds(response) : undefined;
+    if (seconds === undefined) {
+      return fallbackMs;
+    }
+    return seconds * 1000 <= MAX_AUTO_RETRY_DELAY_MS ? seconds * 1000 : undefined;
   }
 
   async function perform(
@@ -300,13 +301,12 @@ export function createManaWgClient(
     retried = false,
   ): Promise<Response> {
     const method = request.method ?? 'GET';
-    // The app derives the acting member from the session cookie; no member headers are needed.
     const headers = new Headers({ accept: 'application/json, text/csv', origin: config.origin });
     if (credentials) {
       try {
         await credentials.apply(headers);
-      } catch {
-        throw new ManaWgError('auth_failed', 401);
+      } catch (error) {
+        throw new ManaWgError('auth_failed', 401, { cause: error });
       }
     }
     if (request.body !== undefined) {
@@ -322,24 +322,29 @@ export function createManaWgClient(
       redirect: 'error',
       signal: AbortSignal.any([AbortSignal.timeout(config.timeoutMs), deadline]),
     };
-    if (request.body !== undefined || method === 'DELETE') {
-      init.body = JSON.stringify(request.body ?? {});
+    if (request.body !== undefined) {
+      init.body = JSON.stringify(request.body);
     }
 
     let response: Response;
     try {
       response = await fetchImpl(buildUrl(request, wgCode), init);
-    } catch {
-      throw deadline.aborted
-        ? new ManaWgError('timeout', 0)
-        : new ManaWgError('upstream_network_error', 0);
+    } catch (error) {
+      // A TimeoutError is the per-attempt timeout. Other failures are reported without their
+      // message, which can carry the upstream address.
+      const timedOut =
+        deadline.aborted || (error instanceof Error && error.name === 'TimeoutError');
+      throw new ManaWgError(timedOut ? 'timeout' : 'upstream_network_error', 0);
     }
     await credentials?.ingest?.(response);
 
     // The session may have been revoked server-side: sign in again exactly once.
     if (!retried && credentials?.invalidate && response.status === 401) {
-      const code = safeCode(await peekJson(response), response.status);
-      if (AUTH_RETRY_CODES.has(code) && credentials.invalidate()) {
+      // Only `auth_required` means the session is gone; `not_a_member` and `member_deactivated`
+      // also come as 401 but answer for the flat.
+      if (safeCode(await peekJson(response), response.status) === 'auth_required') {
+        await discard(response);
+        credentials.invalidate();
         return perform(request, wgCode, deadline, idempotencyKey, true);
       }
     }
@@ -363,8 +368,9 @@ export function createManaWgClient(
       } catch (error) {
         const retryable =
           fallbackMs !== undefined &&
+          !deadline.aborted &&
           error instanceof ManaWgError &&
-          error.code === 'upstream_network_error' &&
+          (error.code === 'upstream_network_error' || error.code === 'timeout') &&
           !isGuardedUpdate(request);
         if (!retryable) {
           throw error;
@@ -379,7 +385,7 @@ export function createManaWgClient(
         // attempt did delete it.
         const code = safeCode(await peekJson(response), response.status);
         if (code !== 'wg_not_found') {
-          await response.body?.cancel().catch(() => undefined);
+          await discard(response);
           return jsonResponse({ deleted: true, alreadyGone: true });
         }
       }
@@ -393,7 +399,7 @@ export function createManaWgClient(
       if (response.status !== 429) {
         outcomeUnknown = true;
       }
-      await response.body?.cancel().catch(() => undefined);
+      await discard(response);
       if (delay > 0) {
         await sleep(delay, deadline);
       }
@@ -434,7 +440,7 @@ export function createManaWgClient(
     if (request.scope === 'account') {
       return undefined;
     }
-    const explicit = request.wgCode?.trim().toUpperCase() || config.defaultWgCode;
+    const explicit = request.wgCode || config.defaultWgCode;
     if (explicit === undefined) {
       return onlyWg(deadline);
     }
@@ -451,10 +457,11 @@ export function createManaWgClient(
         ...(request.signal ? [request.signal] : []),
       ]);
       const wgCode = await wgCodeFor(request, deadline);
-      const idempotencyKey = (request.method ?? 'GET') === 'GET' ? undefined : randomUUID();
+      const isWrite = (request.method ?? 'GET') !== 'GET';
+      const idempotencyKey = isWrite ? randomUUID() : undefined;
       try {
         const payload = await decode(await send(request, wgCode, deadline, idempotencyKey));
-        if (request.scope === 'account' && idempotencyKey) {
+        if (request.scope === 'account' && isWrite) {
           // A new flat (wg_create) means the account may no longer have just one.
           onlyWgStore.delete(onlyWgKey);
         }

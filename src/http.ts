@@ -1,5 +1,10 @@
 import { createHash, timingSafeEqual } from 'node:crypto';
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
+import type { AddressInfo } from 'node:net';
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
+import type { ReadableStream } from 'node:stream/web';
+import { setTimeout as sleep } from 'node:timers/promises';
 import {
   createMcpHandler,
   hostHeaderValidationResponse,
@@ -12,6 +17,7 @@ import {
   validateOriginHeader,
 } from '@modelcontextprotocol/server';
 import { isLoopbackHost, type OAuthConfig } from './config.js';
+import { JSON_CONTENT_TYPE, preflightResponse } from './cors.js';
 import { createDiscovery, protectedResourceMetadataUrl } from './oauth.js';
 import { serverVersion } from './version.js';
 
@@ -41,21 +47,12 @@ export type HttpHandler = {
   close: () => Promise<void>;
 };
 
-const CORS_ALLOW_HEADERS = [
-  'content-type',
-  'authorization',
-  'accept',
-  'mcp-protocol-version',
-  'mcp-session-id',
-  'mcp-method',
-  'mcp-name',
-].join(', ');
 const CORS_ALLOW_METHODS = 'GET, POST, DELETE, OPTIONS';
 
-function json(status: number, payload: unknown, head = false, headers: HeadersInit = {}): Response {
-  return new Response(head ? null : JSON.stringify(payload), {
+function json(status: number, payload: unknown, headers: HeadersInit = {}): Response {
+  return new Response(JSON.stringify(payload), {
     status,
-    headers: { 'content-type': 'application/json; charset=utf-8', ...headers },
+    headers: { 'content-type': JSON_CONTENT_TYPE, ...headers },
   });
 }
 
@@ -95,7 +92,7 @@ function withCors(response: Response, request: Request, auth: HttpAuth): Respons
 export function createHttpHandler(options: HttpHandlerOptions): HttpHandler {
   const handler = createMcpHandler(options.createServer, {
     legacy: 'stateless',
-    onerror: (error) => options.onServerError?.(error),
+    onerror: options.onServerError,
   });
   const { auth } = options;
   const health = {
@@ -127,25 +124,19 @@ export function createHttpHandler(options: HttpHandlerOptions): HttpHandler {
       }
     }
     if (request.method === 'OPTIONS') {
-      return new Response(null, {
-        status: 204,
-        headers: {
-          'access-control-allow-methods': CORS_ALLOW_METHODS,
-          // Clients add headers of their own (the 2.x SDK sends mcp-method and mcp-name).
-          'access-control-allow-headers':
-            request.headers.get('access-control-request-headers') || CORS_ALLOW_HEADERS,
-          'access-control-max-age': '600',
-          vary: 'access-control-request-headers',
-        },
-      });
+      return preflightResponse(request, CORS_ALLOW_METHODS);
     }
     if (
       auth.kind === 'api-key' &&
       !apiKeyMatches(request.headers.get('authorization'), auth.apiKey)
     ) {
-      return json(401, { error: 'unauthorized' }, false, {
-        'www-authenticate': 'Bearer realm="manawg-mcp"',
-      });
+      return json(
+        401,
+        { error: 'unauthorized' },
+        {
+          'www-authenticate': 'Bearer realm="manawg-mcp"',
+        },
+      );
     }
     if (bearerGate) {
       const verified = await bearerGate(request);
@@ -159,12 +150,11 @@ export function createHttpHandler(options: HttpHandlerOptions): HttpHandler {
 
   async function route(request: Request): Promise<Response> {
     const pathname = new URL(request.url).pathname.replace(/\/+$/, '') || '/';
-    const head = request.method === 'HEAD';
     if (pathname === '/health') {
-      return json(200, health, head);
+      return json(200, health);
     }
     if (pathname === '/ready') {
-      return json(ready ? 200 : 503, { ready }, head);
+      return json(ready ? 200 : 503, { ready });
     }
     if (pathname === options.path) {
       return serveMcp(request);
@@ -175,7 +165,10 @@ export function createHttpHandler(options: HttpHandlerOptions): HttpHandler {
 
   return {
     fetch: async (request) => {
-      const response = await route(request);
+      let response = await route(request);
+      if (request.method === 'HEAD') {
+        response = new Response(null, response);
+      }
       return options.cors ? withCors(response, request, auth) : response;
     },
     setReady: (value) => {
@@ -188,24 +181,18 @@ export function createHttpHandler(options: HttpHandlerOptions): HttpHandler {
 export type HttpServerOptions = HttpHandlerOptions & {
   host: string;
   port: number;
-  drainMs?: number;
+  drainMs: number;
 };
 
 export type RunningHttpServer = {
-  server: Server;
+  /** The MCP endpoint, for example `http://127.0.0.1:8080/mcp`. */
   url: string;
+  /** Scheme, host and port without the path. */
+  origin: string;
   port: number;
-  /** Stops accepting connections and reports `/ready` as 503 for the drain window. */
-  beginShutdown: () => Promise<void>;
+  /** Reports `/ready` as 503 for the drain window, then stops accepting and closes connections. */
   close: () => Promise<void>;
 };
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
-    timer.unref?.();
-  });
-}
 
 function toWebRequest(request: IncomingMessage, response: ServerResponse, url: URL): Request {
   const method = request.method ?? 'GET';
@@ -229,51 +216,19 @@ function toWebRequest(request: IncomingMessage, response: ServerResponse, url: U
   return new Request(url, init);
 }
 
-/** Resolves when the socket can take more data, or when it is gone. */
-function drained(res: ServerResponse): Promise<void> {
-  return new Promise((resolve) => {
-    if (res.destroyed) {
-      resolve();
-      return;
-    }
-    const done = () => {
-      res.off('drain', done);
-      res.off('close', done);
-      resolve();
-    };
-    res.once('drain', done);
-    res.once('close', done);
-  });
-}
-
 async function writeResponse(response: Response, res: ServerResponse): Promise<void> {
-  res.statusCode = response.status;
-  response.headers.forEach((value, name) => {
-    if (res.hasHeader(name)) return;
-    res.setHeader(name, value);
-  });
-
-  if (!response.body || res.destroyed) {
+  res.writeHead(response.status, [...response.headers].flat());
+  if (!response.body) {
     res.end();
     return;
   }
-
-  const reader = response.body.getReader();
   try {
-    while (true) {
-      if (res.destroyed) {
-        await reader.cancel();
-        return;
-      }
-      const { done, value } = await reader.read();
-      if (done) break;
-      if (!res.write(Buffer.from(value))) {
-        await drained(res);
-      }
+    await pipeline(Readable.fromWeb(response.body as ReadableStream<Uint8Array>), res);
+  } catch (error) {
+    // The client going away mid-stream is routine; anything else is a failure of the response.
+    if ((error as NodeJS.ErrnoException).code !== 'ERR_STREAM_PREMATURE_CLOSE') {
+      throw error;
     }
-    res.end();
-  } catch {
-    res.destroy();
   }
 }
 
@@ -285,7 +240,6 @@ export function startHttpServer(options: HttpServerOptions): Promise<RunningHttp
     // and a loopback bind behind a reverse proxy keeps working.
     localOnly: options.localOnly ?? (options.auth.kind === 'open' && isLoopbackHost(options.host)),
   });
-  const drainMs = options.drainMs ?? 5_000;
   const server = createServer((request, response) => {
     let webRequest: Request;
     try {
@@ -293,7 +247,7 @@ export function startHttpServer(options: HttpServerOptions): Promise<RunningHttp
       webRequest = toWebRequest(request, response, url);
     } catch {
       // A malformed Host or request target must not reach an uncaught exception.
-      response.writeHead(400, { 'content-type': 'application/json; charset=utf-8' });
+      response.writeHead(400, { 'content-type': JSON_CONTENT_TYPE });
       response.end(JSON.stringify({ error: 'bad_request' }));
       return;
     }
@@ -301,11 +255,11 @@ export function startHttpServer(options: HttpServerOptions): Promise<RunningHttp
       .fetch(webRequest)
       .then((answer) => writeResponse(answer, response))
       .catch((error: unknown) => {
-        if (!response.headersSent) {
-          response.writeHead(500, { 'content-type': 'application/json; charset=utf-8' });
-          response.end(JSON.stringify({ error: 'internal_error' }));
-        } else {
+        if (response.headersSent) {
           response.destroy();
+        } else {
+          response.writeHead(500, { 'content-type': JSON_CONTENT_TYPE });
+          response.end(JSON.stringify({ error: 'internal_error' }));
         }
         options.onServerError?.(error instanceof Error ? error : new Error(String(error)));
       });
@@ -317,32 +271,29 @@ export function startHttpServer(options: HttpServerOptions): Promise<RunningHttp
     server.once('error', reject);
     server.listen(options.port, options.host, () => {
       server.removeListener('error', reject);
-      const address = server.address();
-      const port = typeof address === 'object' && address ? address.port : options.port;
-      const displayHost =
-        options.host === '0.0.0.0' || options.host === '::' ? '127.0.0.1' : options.host;
+      const { port } = server.address() as AddressInfo;
+      const host = options.host === '0.0.0.0' || options.host === '::' ? '127.0.0.1' : options.host;
+      const origin = `http://${host.includes(':') ? `[${host}]` : host}:${port}`;
       let shutdown: Promise<void> | undefined;
-      const beginShutdown = (): Promise<void> => {
-        shutdown ??= (async () => {
-          handler.setReady(false);
-          if (drainMs > 0) {
-            // Still accepting: the readiness probe has to answer 503 first.
-            await sleep(drainMs);
-          }
-          const stopped = new Promise<void>((done) => server.close(() => done()));
-          server.closeIdleConnections?.();
-          await handler.close();
-          server.closeAllConnections?.();
-          await stopped;
-        })();
-        return shutdown;
-      };
       resolve({
-        server,
         port,
-        url: `http://${displayHost}:${port}${options.path}`,
-        beginShutdown,
-        close: beginShutdown,
+        origin,
+        url: origin + options.path,
+        close: () => {
+          shutdown ??= (async () => {
+            handler.setReady(false);
+            if (options.drainMs > 0) {
+              // Still accepting: the readiness probe has to answer 503 first.
+              await sleep(options.drainMs);
+            }
+            const stopped = new Promise<void>((done) => server.close(() => done()));
+            server.closeIdleConnections();
+            await handler.close();
+            server.closeAllConnections();
+            await stopped;
+          })();
+          return shutdown;
+        },
       });
     });
   });

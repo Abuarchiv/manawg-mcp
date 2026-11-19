@@ -16,6 +16,13 @@ export const TOOLSET_NAMES = [
 export type ToolsetName = (typeof TOOLSET_NAMES)[number];
 
 /** True when `toolset` is registered under the chosen list (`undefined` means every toolset). */
-export function toolsetEnabled(toolset: string, chosen: readonly string[] | undefined): boolean {
+export function toolsetEnabled(
+  toolset: ToolsetName,
+  chosen: readonly ToolsetName[] | undefined,
+): boolean {
   return chosen === undefined || toolset === 'overview' || chosen.includes(toolset);
+}
+
+export function isToolsetName(value: string): value is ToolsetName {
+  return (TOOLSET_NAMES as readonly string[]).includes(value);
 }

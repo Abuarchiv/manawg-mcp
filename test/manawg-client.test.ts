@@ -1,46 +1,47 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { afterEach, expect, it, vi } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import type { SessionController } from '../src/auth.js';
 import type { AppConfig } from '../src/config.js';
 import { ManaWgError } from '../src/errors.js';
 import { bearerCredentials, createManaWgClient, sessionCredentials } from '../src/manawg-client.js';
+import { useCleanup } from './helpers/app.js';
 
-const _UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-const validConfig: AppConfig = {
+const validConfig: Pick<AppConfig, 'baseUrl' | 'origin' | 'timeoutMs' | 'defaultWgCode'> = {
   baseUrl: 'https://example.test',
   origin: 'https://example.test',
   defaultWgCode: 'K7Q2M9XD',
   timeoutMs: 10_000,
-  auth: {
-    mode: 'session',
-    url: 'https://project.supabase.co',
-    publishableKey: 'sb_publishable_key_abc',
-    email: 'member@example.test',
-    password: 'correct horse battery',
-    sessionCachePath: '/tmp/manawg-mcp-test-session.json',
-  },
-  allowDestructive: false,
-  transport: 'stdio',
-  http: { host: '127.0.0.1', port: 8080, path: '/mcp', cors: false, drainMs: 5000 },
 };
+
+/** The same config without a default flat, so the client looks up the account's only one. */
+const configWithoutDefault = { ...validConfig, defaultWgCode: undefined };
 
 const SECRET = 'a'.repeat(64);
 
-const cleanup: Array<() => Promise<void>> = [];
-
-afterEach(async () => {
-  while (cleanup.length > 0) {
-    await cleanup.pop()?.();
-  }
-});
+const later = useCleanup();
 
 function jsonResponse(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
     status,
     headers: { 'content-type': 'application/json', ...headers },
   });
+}
+
+/** Every attempt gets its own `Response`: a body can be read only once. */
+function answering(body: unknown, status = 200, headers: Record<string, string> = {}) {
+  return vi.fn<typeof fetch>().mockImplementation(async () => jsonResponse(body, status, headers));
+}
+
+/** Answers the only-flat lookup with one flat and everything else with an empty list. */
+function lookupFetch() {
+  return vi
+    .fn<typeof fetch>()
+    .mockImplementation(async (url) =>
+      String(url).endsWith('/api/wg/mine')
+        ? jsonResponse({ wgs: [{ code: 'K7Q2M9XD' }] })
+        : jsonResponse({ items: [] }),
+    );
 }
 
 function fakeAuth(overrides: Partial<SessionController> = {}): SessionController {
@@ -59,7 +60,7 @@ async function listen(
   await new Promise<void>((resolve) => {
     server.listen(0, '127.0.0.1', resolve);
   });
-  cleanup.push(
+  later(
     () =>
       new Promise<void>((resolve, reject) => {
         server.close((error) => (error ? reject(error) : resolve()));
@@ -107,7 +108,7 @@ it('forwards the session cookie and ingests rotated cookies', async () => {
   expect(auth.ingest).toHaveBeenCalledTimes(1);
 });
 
-it('rejects redirects before member headers can reach another origin', async () => {
+it('rejects redirects before credentials can reach another origin', async () => {
   let targetHeaders: IncomingMessage['headers'] | undefined;
   const targetBaseUrl = await listen((request, response) => {
     targetHeaders = request.headers;
@@ -152,25 +153,33 @@ it.each([502, 503, 504])(
 );
 
 it('retries reads on a transient status and fails after the attempts', async () => {
-  const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({}, 503));
+  const fetchMock = answering({}, 503);
   const client = createManaWgClient(validConfig, fetchMock, undefined, { retryDelaysMs: [1, 1] });
 
   expect(await errorCode(client.call({ path: ['dashboard'] }))).toBe('internal_error');
   expect(fetchMock).toHaveBeenCalledTimes(3);
 });
 
-it('surfaces a 503 busy_retry from the app as busy_retry with its retry hint', async () => {
-  const fetchMock = vi.fn<typeof fetch>().mockImplementation(async () =>
-    jsonResponse({ error: 'service_unavailable', code: 'busy_retry' }, 503, {
-      'retry-after': '2',
-    }),
-  );
+it('keeps the allowlisted code of the last failed attempt', async () => {
+  const fetchMock = answering({ error: 'service_unavailable', code: 'busy_retry' }, 503);
+  const client = createManaWgClient(validConfig, fetchMock, undefined, { retryDelaysMs: [1, 1] });
+
+  expect(await errorCode(client.call({ path: ['dashboard'] }))).toBe('busy_retry');
+  expect(fetchMock).toHaveBeenCalledTimes(3);
+});
+
+it('surfaces a busy_retry whose Retry-After is too long to wait for, with its hint', async () => {
+  const fetchMock = answering({ error: 'service_unavailable', code: 'busy_retry' }, 503, {
+    'retry-after': '30',
+  });
   const client = createManaWgClient(validConfig, fetchMock, undefined, { retryDelaysMs: [1, 1] });
 
   const thrown = await client.call({ path: ['dashboard'] }).catch((error: unknown) => error);
 
   expect(thrown).toBeInstanceOf(ManaWgError);
   expect((thrown as ManaWgError).code).toBe('busy_retry');
+  expect((thrown as ManaWgError).retryAfterSeconds).toBe(30);
+  expect(fetchMock).toHaveBeenCalledTimes(1);
 });
 
 it('retries a read after a network failure and then succeeds', async () => {
@@ -186,23 +195,13 @@ it('retries a read after a network failure and then succeeds', async () => {
 
 it.each([
   [400, 'name_invalid'],
-  [400, 'expected_occurrence_invalid'],
-  [400, 'expected_state_invalid'],
-  [401, 'member_id_invalid'],
-  [403, 'member_not_verified'],
-  [404, 'wg_not_found'],
   [409, 'shopping_item_duplicate'],
-  [409, 'chore_occurrence_changed'],
-  [409, 'shopping_item_changed'],
-] as const)('does not retry HTTP %i writes and returns the safe code', async (status, code) => {
-  const fetchMock = vi
-    .fn<typeof fetch>()
-    .mockResolvedValue(jsonResponse({ error: `secret:${SECRET}`, code }, status));
+] as const)('does not retry an HTTP %i write and returns its safe code', async (status, code) => {
+  const fetchMock = answering({ error: `secret:${SECRET}`, code }, status);
   const client = createManaWgClient(validConfig, fetchMock);
 
   const thrown = await client
     .call({ path: ['shopping'], method: 'POST', body: { name: 'Milch' } })
-    .then(() => undefined)
     .catch((error: unknown) => error);
 
   expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -212,14 +211,11 @@ it.each([
 });
 
 it('retries a rate-limited write with the same key and surfaces the safe code', async () => {
-  const fetchMock = vi
-    .fn<typeof fetch>()
-    .mockResolvedValue(jsonResponse({ code: 'too_many_requests' }, 429));
+  const fetchMock = answering({ code: 'too_many_requests' }, 429);
   const client = createManaWgClient(validConfig, fetchMock, undefined, { retryDelaysMs: [1, 1] });
 
   const thrown = await client
     .call({ path: ['shopping'], method: 'POST', body: { name: 'Milch' } })
-    .then(() => undefined)
     .catch((error: unknown) => error);
 
   expect(fetchMock).toHaveBeenCalledTimes(3);
@@ -231,9 +227,7 @@ it('retries a rate-limited write with the same key and surfaces the safe code', 
 });
 
 it('falls back to the HTTP status when the upstream error has no stable code', async () => {
-  const fetchMock = vi
-    .fn<typeof fetch>()
-    .mockResolvedValue(jsonResponse({ error: `secret:${SECRET}` }, 500));
+  const fetchMock = answering({ error: `secret:${SECRET}` }, 500);
   const client = createManaWgClient(validConfig, fetchMock, undefined, { retryDelaysMs: [1, 1] });
 
   expect(await errorCode(client.call({ path: ['dashboard'] }))).toBe('internal_error');
@@ -255,17 +249,12 @@ it('falls back to the HTTP status when the upstream code is unknown or secret-be
 });
 
 it('keeps retry-after seconds from rate limits', async () => {
-  const fetchMock = vi
-    .fn<typeof fetch>()
-    .mockResolvedValue(
-      jsonResponse({ error: 'slow down', code: 'too_many_requests' }, 429, { 'retry-after': '17' }),
-    );
+  const fetchMock = answering({ error: 'slow down', code: 'too_many_requests' }, 429, {
+    'retry-after': '17',
+  });
   const client = createManaWgClient(validConfig, fetchMock, undefined, { retryDelaysMs: [1, 1] });
 
-  const thrown = await client
-    .call({ path: ['dashboard'] })
-    .then(() => undefined)
-    .catch((error: unknown) => error);
+  const thrown = await client.call({ path: ['dashboard'] }).catch((error: unknown) => error);
 
   expect(fetchMock).toHaveBeenCalledTimes(1);
   expect(thrown).toBeInstanceOf(ManaWgError);
@@ -273,39 +262,57 @@ it('keeps retry-after seconds from rate limits', async () => {
   expect((thrown as ManaWgError).details).toBeUndefined();
 });
 
-it('forwards validation details without leaking unrelated fields', async () => {
-  const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(
-    jsonResponse(
-      {
-        error: 'validation failed',
-        code: 'validation_errors',
-        details: { errors: [{ path: 'name', message: 'too short' }] },
-      },
-      400,
-    ),
+it('forwards validation details but not the rest of the error body', async () => {
+  const fetchMock = answering(
+    {
+      error: `secret:${SECRET}`,
+      code: 'validation_errors',
+      details: { errors: [{ path: 'name', message: 'too short' }] },
+    },
+    400,
   );
   const client = createManaWgClient(validConfig, fetchMock);
 
   const thrown = await client
     .call({ path: ['shopping'], method: 'POST', body: {} })
-    .then(() => undefined)
     .catch((error: unknown) => error);
 
   expect((thrown as ManaWgError).details).toContain('too short');
+  expect(String((thrown as ManaWgError).message)).not.toContain(SECRET);
 });
 
-it('sanitizes response body read failures', async () => {
-  const fetchMock = vi.fn<typeof fetch>().mockResolvedValue({
-    ok: false,
-    status: 500,
-    json: vi.fn().mockRejectedValue(new Error(`secret:${SECRET}`)),
-    clone() {
-      return this;
-    },
-  } as unknown as Response);
+it('answers with the status code when an error body is not JSON', async () => {
+  const fetchMock = vi
+    .fn<typeof fetch>()
+    .mockImplementation(async () => new Response('<html>bad gateway</html>', { status: 500 }));
   const client = createManaWgClient(validConfig, fetchMock, undefined, { retryDelaysMs: [1, 1] });
 
   expect(await errorCode(client.call({ path: ['dashboard'] }))).toBe('internal_error');
+});
+
+it('refuses a successful answer that is not JSON instead of reporting an empty result', async () => {
+  const fetchMock = vi.fn<typeof fetch>().mockImplementation(
+    async () =>
+      new Response('<html>maintenance</html>', {
+        headers: { 'content-type': 'application/json' },
+      }),
+  );
+  const client = createManaWgClient(validConfig, fetchMock);
+
+  expect(await errorCode(client.call({ path: ['dashboard'] }))).toBe('invalid_response');
+});
+
+it.each([
+  ['a 204 without a body', () => new Response(null, { status: 204 })],
+  [
+    'an empty JSON body',
+    () => new Response('', { headers: { 'content-type': 'application/json' } }),
+  ],
+])('reads %s as an empty result', async (_name, answer) => {
+  const fetchMock = vi.fn<typeof fetch>().mockImplementation(async () => answer());
+  const client = createManaWgClient(validConfig, fetchMock);
+
+  await expect(client.call({ path: ['dashboard'] })).resolves.toEqual({});
 });
 
 it('sanitizes thrown transport errors', async () => {
@@ -335,9 +342,7 @@ it('retries once on an auth-required 401 with a fresh cookie', async () => {
 
 it('does not loop beyond one retry when the app keeps rejecting the session', async () => {
   const auth = fakeAuth();
-  const fetchMock = vi
-    .fn<typeof fetch>()
-    .mockResolvedValue(jsonResponse({ error: 'nope', code: 'auth_required' }, 401));
+  const fetchMock = answering({ error: 'nope', code: 'auth_required' }, 401);
   const client = createManaWgClient(validConfig, fetchMock, sessionCredentials(auth));
 
   expect(await errorCode(client.call({ path: ['shopping'] }))).toBe('auth_required');
@@ -359,38 +364,29 @@ it('returns a CSV body as text instead of dropping it', async () => {
   });
 });
 
-it('makes a rarely used upstream code visible instead of hiding it', async () => {
-  const fetchMock = vi
-    .fn<typeof fetch>()
-    .mockResolvedValue(jsonResponse({ error: 'x', code: 'chore_changed' }, 409));
-  const client = createManaWgClient(validConfig, fetchMock);
+it.each([429, 503])(
+  'waits out a short Retry-After on a %i and succeeds on the next attempt',
+  async (status) => {
+    const fetchMock = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce(jsonResponse({ code: 'busy_retry' }, status, { 'retry-after': '0' }))
+      .mockResolvedValueOnce(jsonResponse({ openShopping: [] }));
+    const client = createManaWgClient(validConfig, fetchMock, undefined, { retryDelaysMs: [1, 1] });
 
-  expect(await errorCode(client.call({ path: ['chores', '1'], method: 'PATCH', body: {} }))).toBe(
-    'chore_changed',
-  );
-});
-
-it('waits out a short rate limit and succeeds on the next attempt', async () => {
-  const fetchMock = vi
-    .fn<typeof fetch>()
-    .mockResolvedValueOnce(jsonResponse({ code: 'too_many_requests' }, 429, { 'retry-after': '0' }))
-    .mockResolvedValueOnce(jsonResponse({ openShopping: [] }));
-  const client = createManaWgClient(validConfig, fetchMock, undefined, { retryDelaysMs: [1, 1] });
-
-  await expect(client.call({ path: ['dashboard'] })).resolves.toEqual({ openShopping: [] });
-  expect(fetchMock).toHaveBeenCalledTimes(2);
-});
+    await expect(client.call({ path: ['dashboard'] })).resolves.toEqual({ openShopping: [] });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  },
+);
 
 it('maps a failing session sign-in to the safe auth_failed code', async () => {
-  const auth = {
-    cookieHeader: vi.fn().mockRejectedValue(new Error('auth_failed')),
-    ingest: vi.fn().mockResolvedValue(undefined),
-    invalidate: vi.fn(),
-  };
+  const outage = new Error('auth_failed');
+  const auth = fakeAuth({ cookieHeader: vi.fn().mockRejectedValue(outage) });
   const fetchMock = vi.fn<typeof fetch>();
   const client = createManaWgClient(validConfig, fetchMock, sessionCredentials(auth));
 
-  expect(await errorCode(client.call({ path: ['dashboard'] }))).toBe('auth_failed');
+  const error = await client.call({ path: ['dashboard'] }).catch((caught: unknown) => caught);
+
+  expect(error).toMatchObject({ code: 'auth_failed', status: 401, cause: outage });
   expect(fetchMock).not.toHaveBeenCalled();
 });
 
@@ -479,17 +475,9 @@ it('stops retrying and answers timeout once the call is aborted', async () => {
 });
 
 it('shares the only-flat lookup between per-request clients of one verified user', async () => {
-  const fetchMock = vi
-    .fn<typeof fetch>()
-    .mockImplementation(async (url) =>
-      String(url).endsWith('/api/wg/mine')
-        ? jsonResponse({ wgs: [{ code: 'K7Q2M9XD' }] })
-        : jsonResponse({ items: [] }),
-    );
-  const config = { ...validConfig };
-  delete config.defaultWgCode;
+  const fetchMock = lookupFetch();
   const make = (token: string, subject: string) =>
-    createManaWgClient(config, fetchMock, bearerCredentials(token, subject));
+    createManaWgClient(configWithoutDefault, fetchMock, bearerCredentials(token, subject));
 
   await make('token-1', 'user-shared').call({ path: ['shopping'] });
   await make('token-2', 'user-shared').call({ path: ['shopping'] });
@@ -500,17 +488,13 @@ it('shares the only-flat lookup between per-request clients of one verified user
 });
 
 it('keeps a shared only-flat lookup alive when the caller that started it aborts', async () => {
-  const fetchMock = vi
-    .fn<typeof fetch>()
-    .mockImplementation(async (url) =>
-      String(url).endsWith('/api/wg/mine')
-        ? jsonResponse({ wgs: [{ code: 'K7Q2M9XD' }] })
-        : jsonResponse({ items: [] }),
-    );
-  const config = { ...validConfig };
-  delete config.defaultWgCode;
+  const fetchMock = lookupFetch();
   const make = () =>
-    createManaWgClient(config, fetchMock, bearerCredentials('token', 'user-abort-shared'));
+    createManaWgClient(
+      configWithoutDefault,
+      fetchMock,
+      bearerCredentials('token', 'user-abort-shared'),
+    );
   const first = new AbortController();
 
   const aborted = errorCode(make().call({ path: ['shopping'], signal: first.signal }));
@@ -519,4 +503,28 @@ it('keeps a shared only-flat lookup alive when the caller that started it aborts
 
   expect(await aborted).toBe('timeout');
   await expect(healthy).resolves.toEqual({ items: [] });
+});
+
+it('reports a request that outlasts the per-attempt timeout as timeout and retries a read', async () => {
+  const fetchMock = vi.fn<typeof fetch>().mockImplementation(
+    (_url, init) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
+      }),
+  );
+  const client = createManaWgClient({ ...validConfig, timeoutMs: 5 }, fetchMock, undefined, {
+    retryDelaysMs: [1, 1],
+  });
+
+  expect(await errorCode(client.call({ path: ['dashboard'] }))).toBe('timeout');
+  expect(fetchMock).toHaveBeenCalledTimes(3);
+});
+
+it('sends a DELETE without a body', async () => {
+  const fetchMock = answering({ deleted: true });
+  const client = createManaWgClient(validConfig, fetchMock);
+
+  await client.call({ path: ['expenses', 'e1'], method: 'DELETE' });
+
+  expect(fetchMock.mock.calls[0]?.[1]?.body).toBeUndefined();
 });

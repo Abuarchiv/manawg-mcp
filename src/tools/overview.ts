@@ -23,7 +23,7 @@ export const overviewTools = [
     name: 'wg_list',
     title: 'List your flats',
     description:
-      'Lists every flat the signed-in account is an active member of, each with id, name, share code (code) and your memberId in it. Use it first when the account belongs to several flats, then pass the chosen code as wgCode to every other tool; it is the only tool that needs no wgCode. To see the members and details of one flat, call wg_overview instead. Read-only.',
+      'Lists every flat the signed-in account is an active member of, each with id, name, share code (code) and your memberId in it. Use it first when the account belongs to several flats, then pass the chosen code as wgCode to every flat-scoped tool; wg_list and wg_create work on the account and take no wgCode. To see the members and details of one flat, call wg_overview instead. Read-only.',
     method: 'GET',
     input: z.strictObject({}),
     path: () => ['mine'],
@@ -61,7 +61,7 @@ export const overviewTools = [
         .max(320)
         .optional()
         .describe(
-          'Number of timeline entries to return, from 80 to 320; reminders are not counted. Values below 80 are rejected because the app never returns fewer. Omit for the default of 80.',
+          'Number of timeline entries to return, from 80 to 320; reminders are not counted. Values below 80 are rejected, because the app raises them to 80 anyway. Omit for the default of 80.',
         ),
     }),
     path: () => ['activity'],
@@ -71,35 +71,47 @@ export const overviewTools = [
     name: 'export_get',
     title: 'Export flat data',
     description:
-      'Exports the stored data of the flat for backup or analysis. With format json (default) it returns the requested sections, or all of them when sections is omitted; with format csv it returns exactly one section (expenses when omitted) as { contentType, content }. Members are never paged; limit and offset page every other section. Use the specific list tools for everyday reads and this one only for bulk dumps. Read-only; limited to 20 exports per hour per member (error rate_limited). An unusable format, section or paging value is rejected with format_invalid, section_invalid or pagination_invalid.',
+      'Exports the stored data of the flat for backup or analysis. With format json (default) it returns the requested sections, or all of them when sections is omitted; with format csv it returns exactly one section (expenses when omitted) as { contentType, content }. Members are never paged; limit and offset page every other section. Use the specific list tools for everyday reads and this one only for bulk dumps. Read-only; limited to 20 exports per hour per member (error rate_limited).',
     method: 'GET',
-    input: z.strictObject({
-      format: z
-        .enum(['json', 'csv'])
-        .default('json')
-        .describe('Output format. json can hold several sections, csv exactly one.'),
-      section: exportSection
-        .optional()
-        .describe('Only for format csv: the one section to export. Defaults to expenses.'),
-      sections: z
-        .array(exportSection)
-        .min(1)
-        .optional()
-        .describe('Only for format json: the sections to include. Omit to export all sections.'),
-      limit: z
-        .number()
-        .int()
-        .min(1)
-        .max(100_000)
-        .optional()
-        .describe('Maximum rows per section. Omit to return all rows. Members are never limited.'),
-      offset: z
-        .number()
-        .int()
-        .min(0)
-        .optional()
-        .describe('Rows to skip per section, for paging together with limit. Defaults to 0.'),
-    }),
+    input: z
+      .strictObject({
+        format: z
+          .enum(['json', 'csv'])
+          .default('json')
+          .describe('Output format. json can hold several sections, csv exactly one.'),
+        section: exportSection
+          .optional()
+          .describe('Only for format csv: the one section to export. Defaults to expenses.'),
+        sections: z
+          .array(exportSection)
+          .min(1)
+          .optional()
+          .describe('Only for format json: the sections to include. Omit to export all sections.'),
+        limit: z
+          .number()
+          .int()
+          .min(1)
+          .max(100_000)
+          .optional()
+          .describe(
+            'Maximum rows per section. Omit to return all rows. Members are never limited.',
+          ),
+        offset: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe('Rows to skip per section, for paging together with limit. Defaults to 0.'),
+      })
+      .refine(
+        // The app ignores the parameter that does not belong to the format; refuse it instead.
+        ({ format, section, sections }) =>
+          format === 'csv' ? sections === undefined : section === undefined,
+        {
+          message:
+            'Pass sections with format json and section with format csv, not the other way round.',
+        },
+      ),
     path: () => ['export'],
     query: (input) => ({
       format: input.format,

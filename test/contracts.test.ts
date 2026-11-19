@@ -1,37 +1,31 @@
-import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
-import { afterEach, expect, it, vi } from 'vitest';
+import type { Client } from '@modelcontextprotocol/client';
+import { expect, it, vi } from 'vitest';
 import type { WgRequest } from '../src/manawg-client.js';
 import { buildServer } from '../src/server.js';
+import { TOOL_DEFS } from '../src/tools/registry.js';
+import { connectClient, useCleanup } from './helpers/app.js';
 
-// Input rules that mirror the app's validators but that a stub app does not exercise: calls
-// the app would reject must fail inside the MCP before any request, and the request shapes
-// of tools that were wrong once stay pinned. Each case is a bug found in the contract audit.
+// Input rules the app enforces. The MCP must reject these calls itself, before any request, and
+// the request shapes below must stay as the app expects them.
 
 const ID = '00000000-0000-4000-8000-000000000002';
 const NOW = '2026-11-01T00:00:00Z';
 
-const cleanup: Array<() => Promise<void> | void> = [];
+const later = useCleanup();
 
-afterEach(async () => {
-  while (cleanup.length > 0) {
-    await cleanup.pop()?.();
-  }
-});
+const send = (client: Client, name: string, args: Record<string, unknown>) =>
+  client.callTool({ name, arguments: args });
 
-async function connect() {
+async function connect({ allowDestructive = true } = {}) {
   const fake = { call: vi.fn().mockResolvedValue({}) };
   // The cancel signal is plumbing, not part of the request shape the app sees.
   const server = buildServer(
     { call: ({ signal: _signal, ...request }: WgRequest) => fake.call(request) },
-    { allowDestructive: true },
+    { allowDestructive },
   );
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  const client = new Client({ name: 'contracts', version: '0.0.0' });
-  await Promise.all([client.connect(clientTransport), server.connect(serverTransport)]);
-  cleanup.push(
-    () => client.close(),
-    () => server.close(),
-  );
+  const client = await connectClient(server, 'contracts');
+  later(() => client.close());
+  later(() => server.close());
   return { client, fake };
 }
 
@@ -52,7 +46,6 @@ it.each([
   ['inventory_consume', { id: ID, delta: -1.5 }],
   ['wg_update', {}],
   ['wg_update', { name: 'WG', joiningEnabled: false }],
-  ['wg_update', { name: 'WG', rotateShareCode: true }],
   ['wg_update', { name: 'a'.repeat(101) }],
   ['chat_send', {}],
   ['chat_send', { body: 'hi', imageUrl: 'https://example.test/a.png' }],
@@ -63,6 +56,23 @@ it.each([
   ['inventory_update', { id: ID, quantity: 1, expectedQuantity: 1.234, expectedUpdatedAt: NOW }],
   ['notifications_update', { notifyStatementEmail: 'yes' }],
   ['export_get', { sections: ['nonsense'] }],
+  ['export_get', { format: 'csv', sections: ['members'] }],
+  ['export_get', { section: 'members' }],
+  ['events_list', { from: NOW }],
+  ['events_list', { to: NOW }],
+  ['event_create', { title: 'Party', startsAt: '0026-01-01T00:00:00Z' }],
+  ['event_create', { title: 'Party', startsAt: '20266-01-01T00:00:00Z' }],
+  [
+    'event_occurrence_change',
+    { id: ID, occurrenceStartsAt: NOW, action: 'cancel', expectedUpdatedAt: NOW },
+  ],
+  [
+    'event_occurrence_change',
+    { id: ID, occurrenceStartsAt: NOW, action: 'cancel', title: 'Moved' },
+  ],
+  ['note_update', { id: ID }],
+  ['note_update', { id: ID, expectedUpdatedAt: NOW }],
+  ['chore_create', { title: 'Bad', intervalDays: 61, recurrenceType: 'months' }],
   ['recurring_update', { id: ID, currency: 'CHF' }],
   [
     'recurring_create',
@@ -80,6 +90,12 @@ it.each([
   ['activity_get', { limit: 321 }],
   ['import_preview', { source: 'bogus_csv', payload: 'x' }],
   ['shopping_update', { id: ID }],
+  ['inventory_update', { id: ID }],
+  ['inventory_update', { id: ID, wgCode: 'K7Q2M9XD' }],
+  ['inventory_update', { id: ID, quantity: 1, expectedQuantity: 2 }],
+  ['inventory_update', { id: ID, quantity: 1, expectedUpdatedAt: NOW }],
+  ['recurring_update', { id: ID }],
+  ['recurring_update', { id: ID, expectedNextDueAt: NOW, wgCode: 'K7Q2M9XD' }],
 ])('refuses %s locally when the app would reject %j', async (name, args) => {
   const { client, fake } = await connect();
 
@@ -89,32 +105,62 @@ it.each([
   expect(fake.call).not.toHaveBeenCalled();
 });
 
-it('sends the request shapes the app expects', async () => {
-  const { client, fake } = await connect();
-  const call = (name: string, args: Record<string, unknown>) =>
-    client.callTool({ name, arguments: args });
+it('lists destructive tools only when allowed', async () => {
+  const listed = async (allowDestructive: boolean) => {
+    const { client } = await connect({ allowDestructive });
+    return (await client.listTools()).tools;
+  };
+  const [guarded, unguarded] = [await listed(false), await listed(true)];
+  const guardedNames = guarded.map((tool) => tool.name);
+  const hidden = unguarded.filter((tool) => !guardedNames.includes(tool.name));
 
-  await call('export_get', { sections: ['members', 'events'] });
+  expect(guardedNames).not.toEqual(
+    expect.arrayContaining(['expense_delete', 'reminder_send', 'cash_payment_void']),
+  );
+  expect(guarded.filter((tool) => tool.annotations?.destructiveHint)).toEqual([]);
+  expect(hidden.map((tool) => tool.name).sort()).toEqual(
+    TOOL_DEFS.filter((tool) => tool.gate)
+      .map((tool) => tool.name)
+      .sort(),
+  );
+  expect(hidden.every((tool) => tool.annotations?.destructiveHint)).toBe(true);
+});
+
+it('sends the export sections as one comma-separated query value', async () => {
+  const { client, fake } = await connect();
+
+  await send(client, 'export_get', { sections: ['choreCompletions', 'inventory'] });
+
   expect(fake.call).toHaveBeenLastCalledWith({
     method: 'GET',
     path: ['export'],
-    query: { format: 'json', sections: 'members,events' },
+    query: { format: 'json', sections: 'choreCompletions,inventory' },
   });
+});
 
-  await call('event_update', { id: ID, endsAt: null, location: null });
+it('sends null to clear optional event fields', async () => {
+  const { client, fake } = await connect();
+
+  await send(client, 'event_update', { id: ID, endsAt: null, location: null });
+
   expect(fake.call).toHaveBeenLastCalledWith({
     method: 'PATCH',
     path: ['events', ID],
     body: { endsAt: null, location: null },
   });
+});
 
-  await call('expense_create', {
+it('links an expense to the recurring expense it books', async () => {
+  const { client, fake } = await connect();
+
+  await send(client, 'expense_create', {
     amountCents: 1000,
     description: 'Miete',
     splits: [split],
     recurringExpenseId: ID,
     expectedRecurringNextDueAt: NOW,
   });
+
   expect(fake.call).toHaveBeenLastCalledWith(
     expect.objectContaining({
       body: expect.objectContaining({ recurringExpenseId: ID, expectedRecurringNextDueAt: NOW }),
@@ -122,10 +168,26 @@ it('sends the request shapes the app expects', async () => {
   );
 });
 
+it('sends the recurrence of a monthly chore', async () => {
+  const { client, fake } = await connect();
+
+  await send(client, 'chore_create', {
+    title: 'Bad putzen',
+    intervalDays: 1,
+    recurrenceType: 'months',
+  });
+
+  expect(fake.call).toHaveBeenLastCalledWith(
+    expect.objectContaining({
+      body: expect.objectContaining({ recurrenceType: 'months', intervalDays: 1 }),
+    }),
+  );
+});
+
 it('sends only the name the app accepts for wg_update', async () => {
   const { client, fake } = await connect();
 
-  await client.callTool({ name: 'wg_update', arguments: { name: '  Sonnen-WG ' } });
+  await send(client, 'wg_update', { name: '  Sonnen-WG ' });
 
   expect(fake.call).toHaveBeenLastCalledWith({
     method: 'PATCH',
@@ -134,10 +196,10 @@ it('sends only the name the app accepts for wg_update', async () => {
   });
 });
 
-it('sends chat_send as text only', async () => {
+it('trims the chat_send body and forwards replyToMessageId', async () => {
   const { client, fake } = await connect();
 
-  await client.callTool({ name: 'chat_send', arguments: { body: ' hi ', replyToMessageId: ID } });
+  await send(client, 'chat_send', { body: ' hi ', replyToMessageId: ID });
 
   expect(fake.call).toHaveBeenLastCalledWith({
     method: 'POST',
@@ -149,25 +211,19 @@ it('sends chat_send as text only', async () => {
 it('accepts two-decimal inventory quantities like the app', async () => {
   const { client, fake } = await connect();
 
-  await client.callTool({
-    name: 'inventory_add',
-    arguments: { name: 'Milk', quantity: 1.25, threshold: 0.5 },
-  });
+  await send(client, 'inventory_add', { name: 'Milk', quantity: 1.25, threshold: 0.5 });
   expect(fake.call).toHaveBeenLastCalledWith(
     expect.objectContaining({
       body: expect.objectContaining({ quantity: 1.25, threshold: 0.5 }),
     }),
   );
 
-  await client.callTool({
-    name: 'inventory_update',
-    arguments: {
-      id: ID,
-      quantity: 2.5,
-      expectedQuantity: 1.25,
-      expectedUpdatedAt: NOW,
-      quantityDelta: -0.75,
-    },
+  await send(client, 'inventory_update', {
+    id: ID,
+    quantity: 2.5,
+    expectedQuantity: 1.25,
+    expectedUpdatedAt: NOW,
+    quantityDelta: -0.75,
   });
   expect(fake.call).toHaveBeenLastCalledWith(
     expect.objectContaining({
@@ -181,28 +237,16 @@ it('accepts two-decimal inventory quantities like the app', async () => {
   );
 });
 
-it('sends the notification and export keys the app knows', async () => {
+it('sends the notification flags it is given', async () => {
   const { client, fake } = await connect();
 
-  await client.callTool({
-    name: 'notifications_update',
-    arguments: { notifyStatementEmail: false },
-  });
+  await send(client, 'notifications_update', { notifyStatementEmail: false });
+
   expect(fake.call).toHaveBeenLastCalledWith({
     method: 'PATCH',
     path: ['notifications'],
     body: { notifyStatementEmail: false },
   });
-
-  await client.callTool({
-    name: 'export_get',
-    arguments: { sections: ['choreCompletions', 'inventory'] },
-  });
-  expect(fake.call).toHaveBeenLastCalledWith(
-    expect.objectContaining({
-      query: expect.objectContaining({ sections: 'choreCompletions,inventory' }),
-    }),
-  );
 });
 
 it('widens a bare-date events_list "to" to the end of that day', async () => {
@@ -271,40 +315,137 @@ it('forwards the offset flag of preview splits to settlement_commit', async () =
   });
 });
 
-it('sends the app paging and edit keys', async () => {
+it('pages chat_messages with beforeId and limit', async () => {
   const { client, fake } = await connect();
-  const call = (name: string, args: Record<string, unknown>) =>
-    client.callTool({ name, arguments: args });
 
-  await call('chat_messages', { beforeId: ID, limit: 20 });
+  await send(client, 'chat_messages', { beforeId: ID, limit: 20 });
+
   expect(fake.call).toHaveBeenLastCalledWith({
     method: 'GET',
     path: ['chat', 'messages'],
     query: { beforeId: ID, limit: 20 },
   });
+});
 
-  await call('activity_get', { limit: 200 });
+it('passes the activity_get limit through', async () => {
+  const { client, fake } = await connect();
+
+  await send(client, 'activity_get', { limit: 200 });
+
   expect(fake.call).toHaveBeenLastCalledWith({
     method: 'GET',
     path: ['activity'],
     query: { limit: 200 },
   });
+});
 
-  await call('chore_update', { id: ID, title: 'Bins', expectedUpdatedAt: NOW });
+it('sends the optimistic-lock guard of chore_update', async () => {
+  const { client, fake } = await connect();
+
+  await send(client, 'chore_update', { id: ID, title: 'Bins', expectedUpdatedAt: NOW });
+
   expect(fake.call).toHaveBeenLastCalledWith({
     method: 'PATCH',
     path: ['chores', ID],
     body: { title: 'Bins', expectedUpdatedAt: NOW },
   });
+});
 
-  await call('import_preview', { source: 'tricount_csv', payload: 'x' });
+it.each(['tricount_csv', 'settleup_csv'])('previews an import from %s', async (source) => {
+  const { client, fake } = await connect();
+
+  await send(client, 'import_preview', { source, payload: 'x' });
+
   expect(fake.call).toHaveBeenLastCalledWith({
     method: 'POST',
     path: ['imports', 'preview'],
-    body: { source: 'tricount_csv', payload: 'x' },
+    body: { source, payload: 'x' },
   });
-  await call('import_preview', { source: 'settleup_csv', payload: 'x' });
-  expect(fake.call).toHaveBeenLastCalledWith(
-    expect.objectContaining({ body: { source: 'settleup_csv', payload: 'x' } }),
-  );
+});
+
+it('accepts a day interval above the months limit', async () => {
+  const { client, fake } = await connect();
+
+  await send(client, 'chore_create', { title: 'Bins', intervalDays: 61, recurrenceType: 'days' });
+
+  expect(fake.call).toHaveBeenCalledTimes(1);
+});
+
+it('keeps the id of fixed-cost, supply and shopping calls where the app reads it', async () => {
+  const { client, fake } = await connect();
+
+  // The collection route of recurring-expenses takes the id in the body, not in the path.
+  await send(client, 'recurring_advance', { id: ID, expectedNextDueAt: NOW });
+  expect(fake.call).toHaveBeenLastCalledWith({
+    method: 'PATCH',
+    path: ['recurring-expenses'],
+    body: { id: ID, expectedNextDueAt: NOW },
+  });
+
+  await send(client, 'recurring_delete', { id: ID });
+  expect(fake.call).toHaveBeenLastCalledWith({
+    method: 'DELETE',
+    path: ['recurring-expenses'],
+    body: { id: ID },
+  });
+
+  await send(client, 'recurring_update', { id: ID, paused: true, expectedNextDueAt: NOW });
+  expect(fake.call).toHaveBeenLastCalledWith({
+    method: 'PATCH',
+    path: ['recurring-expenses', ID],
+    body: { paused: true, expectedNextDueAt: NOW },
+  });
+
+  await send(client, 'inventory_consume', { id: ID, delta: -2 });
+  expect(fake.call).toHaveBeenLastCalledWith({
+    method: 'POST',
+    path: ['inventory', ID, 'consume'],
+    body: { delta: -2 },
+  });
+
+  await send(client, 'inventory_update', { id: ID, quantityDelta: 3 });
+  expect(fake.call).toHaveBeenLastCalledWith({
+    method: 'PATCH',
+    path: ['inventory', ID],
+    body: { quantityDelta: 3 },
+  });
+
+  await send(client, 'shopping_set_bought', {
+    id: ID,
+    bought: true,
+    expectedUpdatedAt: NOW,
+    expectedBoughtAt: null,
+  });
+  expect(fake.call).toHaveBeenLastCalledWith({
+    method: 'PATCH',
+    path: ['shopping', ID],
+    body: { bought: true, expectedUpdatedAt: NOW, expectedBoughtAt: null },
+  });
+
+  await send(client, 'shopping_update', {
+    id: ID,
+    quantity: null,
+    expectedUpdatedAt: NOW,
+    expectedBoughtAt: null,
+  });
+  expect(fake.call).toHaveBeenLastCalledWith({
+    method: 'PATCH',
+    path: ['shopping', ID],
+    body: { quantity: null, expectedUpdatedAt: NOW, expectedBoughtAt: null },
+  });
+});
+
+it('pages expenses_list over the full list the app returns', async () => {
+  const { client, fake } = await connect();
+  const expenses = Array.from({ length: 5 }, (_, index) => ({ id: `e${index}` }));
+  fake.call.mockResolvedValueOnce({ expenses, payments: [] });
+
+  const result = await send(client, 'expenses_list', { limit: 2, offset: 1 });
+
+  expect(result.structuredContent).toEqual({
+    expenses: expenses.slice(1, 3),
+    payments: [],
+    total: 5,
+    hasMore: true,
+  });
 });

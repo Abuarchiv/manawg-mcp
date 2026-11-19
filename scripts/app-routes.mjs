@@ -40,4 +40,4 @@ const out = join(dirname(fileURLToPath(import.meta.url)), '..', 'test/fixtures/a
 const note =
   'Snapshot of the ManaWG app API surface under /api/wg (apps/web/src/app/api/wg/**/route.ts). Refresh with `node scripts/app-routes.mjs <path-to-manawg-app>`.';
 writeFileSync(out, `${JSON.stringify({ _note: note, routes }, null, 2)}\n`);
-process.stdout.write(`${routes.length} routes written to ${relative(process.cwd(), out)}\n`);
+console.log(`${routes.length} routes written to ${relative(process.cwd(), out)}`);

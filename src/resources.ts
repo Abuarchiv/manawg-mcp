@@ -1,6 +1,9 @@
 import type { QueryParams, RequestScope } from './manawg-client.js';
 import type { PayloadLimits } from './payload.js';
 
+/** Entities listed per template: enough to pick from, cheap to fetch on every resources/list. */
+export const ENTITY_LIST_LIMIT = 50;
+
 export type ResourceDef = {
   name: string;
   uri: string;
@@ -146,7 +149,7 @@ export const RESOURCE_TEMPLATE_DEFS: ResourceTemplateDef[] = [
   entityResource('member', 'Member', 'One member by id (members/[id]).', ['members'], {
     key: 'members',
     label: 'name',
-    query: { limit: 50 },
+    query: { limit: ENTITY_LIST_LIMIT },
   }),
   entityResource(
     'recurring',
