@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Every tool description now says what the tool does, when to use it instead of its siblings,
+  who may call it, what it changes or notifies and which error codes it returns.
+- Every tool input field carries a schema description: where the value comes from, its unit and
+  what the default means.
+- `note_react` is marked `idempotentHint`, since it sets the reaction to a given state.
+- Fixes since 0.2.1: app API contract matched, HTTP transport hardened, `capPayload` no longer
+  loops on one-item arrays, `glama.json` added.
+
 ## 0.2.1 (2026-11-04)
 
 ### Changed

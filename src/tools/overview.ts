@@ -23,7 +23,7 @@ export const overviewTools = [
     name: 'wg_list',
     title: 'List your flats',
     description:
-      'All flats of the signed-in account with name, code (share code) and memberId. When there is more than one, pass the code as wgCode to every other tool.',
+      'Lists every flat the signed-in account is an active member of, each with id, name, share code (code) and your memberId in it. Use it first when the account belongs to several flats, then pass the chosen code as wgCode to every other tool; it is the only tool that needs no wgCode. To see the members and details of one flat, call wg_overview instead. Read-only.',
     method: 'GET',
     input: z.strictObject({}),
     path: () => ['mine'],
@@ -33,7 +33,7 @@ export const overviewTools = [
     name: 'wg_overview',
     title: 'Flat overview',
     description:
-      'Manifest of the connected flat: wg (id, name, shareCode, createdAt), members (id, name, color) and currentMember. The starting point for every task; use the memberId values from here in all other tools.',
+      'Returns the manifest of the connected flat: wg (id, name, shareCode, createdAt), members (id, name, color) and currentMember (your memberId and name). Call it at the start of a task to resolve member names to the member ids that all other tools take. For balances, spending and open items use dashboard_get; to list the other flats of the account use wg_list. Read-only; any member may call it.',
     method: 'GET',
     input: z.strictObject({}),
     path: () => [],
@@ -42,7 +42,7 @@ export const overviewTools = [
     name: 'dashboard_get',
     title: 'Read the dashboard',
     description:
-      'Compact overall picture: balances, spendByDay, spending totals (cents), openShoppingCount, openShoppingTop, dueChores, activity, latestAnnouncement, myOpenAnnouncements, dueRecurringExpenses, absentMembers, wgHealth and setup. Totals per currency in totalSpendByCurrency/weekSpendByCurrency/monthSpendByCurrency.',
+      'Returns the compact overall picture of the flat in one call: balances, spendByDay, spending totals in cents (per currency in totalSpendByCurrency, weekSpendByCurrency, monthSpendByCurrency), openShoppingCount, openShoppingTop, dueChores, activity, latestAnnouncement, myOpenAnnouncements, dueRecurringExpenses, absentMembers and wgHealth setup state. Use it for a quick status check; for full lists use the dedicated tools such as expenses_list, shopping_list or chores_list, and for the event history use activity_get. Read-only; limited to 60 reads per minute per member (error rate_limited).',
     method: 'GET',
     input: z.strictObject({}),
     path: () => ['dashboard'],
@@ -51,7 +51,7 @@ export const overviewTools = [
     name: 'activity_get',
     title: 'Read the activity feed',
     description:
-      'Chronological timeline (expenses, shopping, announcements, chores, recurring, absences, audit) plus active reminders (kind, title, detail, href; top 6). Reads are limited to 120 requests per minute per IP.',
+      'Returns the chronological timeline of the newest 80 entries of the flat (expenses, shopping, announcements, chore completions, recurring costs, absences, audit events) plus active reminders (kind, title, detail, href; top 6) for open shopping items, overdue chores and open announcements. Use it to see what happened recently and who did it; it takes no filters or paging. For current totals and balances use dashboard_get, for a complete data dump use export_get. Read-only.',
     method: 'GET',
     input: z.strictObject({}),
     path: () => ['activity'],
@@ -60,18 +60,34 @@ export const overviewTools = [
     name: 'export_get',
     title: 'Export flat data',
     description:
-      'Export of the flat data. format json returns all sections or only those named in sections; format csv returns exactly ONE section (section, expenses when omitted) as { contentType, content }. Sections: members, expenses, expensePayments, recurringExpenses, shoppingItems, chores, choreCompletions, inventory, absences, announcements, announcementComments, events, chatMessages, auditEvents. limit up to 100000 and offset for paging (members are never paged).',
+      'Exports the stored data of the flat for backup or analysis. With format json (default) it returns the requested sections, or all of them when sections is omitted; with format csv it returns exactly one section (expenses when omitted) as { contentType, content }. Members are never paged; limit and offset page every other section. Use the specific list tools for everyday reads and this one only for bulk dumps. Read-only; limited to 20 exports per hour per member (error rate_limited). An unusable format, section or paging value is rejected with format_invalid, section_invalid or pagination_invalid.',
     method: 'GET',
     input: z.strictObject({
-      format: z.enum(['json', 'csv']).default('json'),
-      section: exportSection.optional().describe('Only for format csv: the one section.'),
+      format: z
+        .enum(['json', 'csv'])
+        .default('json')
+        .describe('Output format. json can hold several sections, csv exactly one.'),
+      section: exportSection
+        .optional()
+        .describe('Only for format csv: the one section to export. Defaults to expenses.'),
       sections: z
         .array(exportSection)
         .min(1)
         .optional()
-        .describe('Only for format json: limit the export to these sections.'),
-      limit: z.number().int().min(1).max(100_000).optional(),
-      offset: z.number().int().min(0).optional(),
+        .describe('Only for format json: the sections to include. Omit to export all sections.'),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(100_000)
+        .optional()
+        .describe('Maximum rows per section. Omit to return all rows. Members are never limited.'),
+      offset: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe('Rows to skip per section, for paging together with limit. Defaults to 0.'),
     }),
     path: () => ['export'],
     query: (input) => ({
