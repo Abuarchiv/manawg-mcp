@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { SupabaseAuthConfig } from './config.js';
 
@@ -195,6 +195,8 @@ export function createSessionController(
   let session: SupabaseSession | undefined;
   let loaded = false;
   let pending: Promise<SupabaseSession> | undefined;
+  /** The configured refresh token is single-use: once tried, replaying it only trips reuse detection. */
+  let bootstrapTried = false;
 
   function readCache(): SupabaseSession | undefined {
     try {
@@ -217,8 +219,17 @@ export function createSessionController(
         }
         return;
       }
-      writeFileSync(authConfig.sessionCachePath, `${JSON.stringify(next)}\n`, { mode: 0o600 });
-      chmodSync(authConfig.sessionCachePath, 0o600);
+      // Write beside the cache and rename over it: concurrent readers never see a partial file
+      // and the result is owner-only even when an older, wider file was there before.
+      const temp = `${authConfig.sessionCachePath}.${process.pid}.tmp`;
+      try {
+        rmSync(temp, { force: true });
+        writeFileSync(temp, `${JSON.stringify(next)}\n`, { mode: 0o600, flag: 'wx' });
+        renameSync(temp, authConfig.sessionCachePath);
+      } catch (error) {
+        rmSync(temp, { force: true });
+        throw error;
+      }
     } catch {
       // A read-only cache never blocks a sign-in that already succeeded.
     }
@@ -266,11 +277,12 @@ export function createSessionController(
   }
 
   async function bootstrapSession(): Promise<SupabaseSession | undefined> {
-    if (authConfig.bootstrapRefreshToken) {
+    if (authConfig.bootstrapRefreshToken && !bootstrapTried) {
       const refreshed = await tokenRequest({
         grant_type: 'refresh_token',
         refresh_token: authConfig.bootstrapRefreshToken,
       });
+      bootstrapTried = true;
       if (refreshed !== 'rejected') {
         return refreshed;
       }
@@ -292,6 +304,16 @@ export function createSessionController(
     return candidate !== undefined && candidate.expires_at * 1000 > Date.now() + 60_000;
   }
 
+  /** A newer session another process wrote to the cache since `current` was loaded, if any. */
+  function rotatedElsewhere(current: SupabaseSession): SupabaseSession | undefined {
+    const cached = readCache();
+    return cached &&
+      cached.refresh_token !== current.refresh_token &&
+      cached.expires_at > current.expires_at
+      ? cached
+      : undefined;
+  }
+
   async function ensureSession(): Promise<SupabaseSession> {
     if (pending) {
       return pending;
@@ -307,6 +329,17 @@ export function createSessionController(
 
     pending = (async () => {
       if (session) {
+        // Several servers share one cache, and a refresh token works once: take up what a
+        // sibling already rotated instead of replaying the old token or deleting its session.
+        const rotated = rotatedElsewhere(session);
+        if (rotated) {
+          session = rotated;
+          if (isFresh(session)) {
+            return session;
+          }
+        }
+      }
+      for (let attempt = 0; session && attempt < 2; attempt++) {
         const refreshed = await tokenRequest({
           grant_type: 'refresh_token',
           refresh_token: session.refresh_token,
@@ -316,6 +349,17 @@ export function createSessionController(
           persist(session);
           return refreshed;
         }
+        // Rejected: a sibling may have won the race and rotated the token just now.
+        const rotated = rotatedElsewhere(session);
+        if (!rotated) {
+          break;
+        }
+        session = rotated;
+        if (isFresh(session)) {
+          return session;
+        }
+      }
+      if (session) {
         session = undefined;
         persist(undefined);
       }
@@ -363,9 +407,23 @@ export function createSessionController(
         // would discard its result and make the next caller sign in again.
         return;
       }
-      session = undefined;
-      loaded = true;
-      persist(undefined);
+      if (!loaded) {
+        session ??= readCache();
+        loaded = true;
+      }
+      if (session) {
+        // A sibling may have rotated the session since we loaded it: adopt that one and leave
+        // the cache alone instead of overwriting it with our stale refresh token.
+        const rotated = rotatedElsewhere(session);
+        if (rotated) {
+          session = rotated;
+          return;
+        }
+        // The access token was refused; its refresh token is still the live one. Keep it so
+        // the next call refreshes instead of replaying a long-rotated bootstrap token. Only
+        // the in-memory copy changes: the shared cache may already hold a newer session.
+        session = { ...session, expires_at: 0 };
+      }
     },
   };
 }

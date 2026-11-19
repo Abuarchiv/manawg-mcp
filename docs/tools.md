@@ -1,6 +1,6 @@
 # Tools, resources and prompts
 
-The reference for everything the server exposes: 74 tools, 13 resources, 4 resource templates and
+The reference for everything the server exposes: 87 tools, 13 resources, 4 resource templates and
 4 prompts. Each tool calls exactly one route of the ManaWG app API with the body that route
 accepts, so tools and app never disagree about what is allowed.
 
@@ -61,6 +61,7 @@ payload as text and as `structuredContent`.
 | `shopping_list` | Read the shopping list | read |
 | `shopping_add` | Add a shopping item | write |
 | `shopping_set_bought` | Mark an item as bought | write |
+| `shopping_update` | Edit a shopping item | write |
 | `shopping_remove` | Remove a shopping item | destructive † |
 | `shopping_clear_bought` | Clear bought items (admin) | destructive † |
 
@@ -83,6 +84,7 @@ payload as text and as `structuredContent`.
 | `chore_create` | Create a chore | write |
 | `chore_update` | Edit a chore | write |
 | `chore_complete` | Complete a chore | write |
+| `chore_complete_undo` | Undo a chore completion | write |
 | `chore_delete` | Delete a chore | destructive † |
 
 ### Noticeboard
@@ -92,9 +94,10 @@ payload as text and as `structuredContent`.
 | `notes_list` | Read the noticeboard | read |
 | `note_comments` | Read the comments on a post | read |
 | `note_create` | Write a post | write |
+| `chore_swap_request` | Ask the flat to take over a chore | write |
 | `note_update` | Change a post | write |
 | `note_delete` | Delete a post | destructive † |
-| `note_comment` | Write a comment | write |
+| `note_comment` | Add a comment to a post | write |
 | `note_comment_update` | Edit your own comment | write |
 | `note_comment_delete` | Delete your own comment | destructive † |
 | `note_react` | Set a reaction | write |
@@ -121,6 +124,7 @@ payload as text and as `structuredContent`.
 | `event_create` | Create a calendar event | write |
 | `event_update` | Edit a calendar event | write |
 | `event_delete` | Delete a calendar event | destructive † |
+| `event_occurrence_change` | Cancel or move one occurrence | destructive † |
 | `absences_list` | Read absences | read |
 | `absence_create` | Record an absence | write |
 | `absence_delete` | Delete an absence | destructive † |
@@ -132,10 +136,17 @@ payload as text and as `structuredContent`.
 | `members_list` | List members | read |
 | `member_get` | Read a member and their open balances | read |
 | `member_update` | Change a member (admin, sensitive) | destructive † |
+| `invite_create` | Create an invite link | write |
+| `invites_list` | List active invite links | read |
+| `invite_revoke` | Revoke an invite link | destructive † |
+| `invite_email` | Email an invite link | write |
 | `notifications_get` | Read notification settings | read |
 | `notifications_update` | Change notification settings | write |
 | `wg_update` | Change flat settings (admin) | destructive † |
 | `calendar_subscription_get` | Read the calendar subscription | read |
+| `calendar_subscription_create` | Create the calendar subscription | write |
+| `calendar_subscription_rotate` | Rotate the calendar subscription URL | destructive † |
+| `calendar_subscription_revoke` | Revoke the calendar subscription | destructive † |
 
 ### Imports and new flats
 
@@ -143,11 +154,27 @@ payload as text and as `structuredContent`.
 | --- | --- | --- |
 | `import_preview` | Preview an import | read |
 | `import_commit` | Commit an import | destructive † |
+| `imports_list` | List imports that can be undone | read |
+| `import_undo` | Undo an import | destructive † |
 | `wg_create` | Create a new flat | write |
 
-† Destructive: registered only when `MANAWG_ALLOW_DESTRUCTIVE=1` (16 tools). The hosted server
-at `mcp.manawg.com` leaves them off, so it exposes 58 tools. `import_preview` is a POST without
-side effects and counts as read.
+† Destructive: registered only when `MANAWG_ALLOW_DESTRUCTIVE=1` (21 tools). The hosted server
+at `mcp.manawg.com` leaves them off, so it exposes 66 tools. Besides deletions this covers actions
+that cannot be taken back or change who can reach the flat: `import_commit` and `import_undo`,
+`invite_revoke`, `calendar_subscription_rotate` and `calendar_subscription_revoke`, and
+`event_occurrence_change` (cancelling a date has no undo). `import_preview` is a POST without side
+effects and counts as read.
+
+Imports read Splitwise, Splid, Tricount (older exports only: Tricount dropped export in 2024) and
+Settle Up CSV files, or pasted receipt text. `import_commit` can be taken back in one step with
+`import_undo`; `imports_list` finds the import id. New flatmates join through an invite link:
+`invite_create` returns a link (valid 14 days, 10 joins, at most 20 active links per flat) and
+`invite_email` sends one by mail, because the share code alone does not allow joining. The
+calendar feed can be created, rotated and revoked; its URL is a secret and shown to the user only.
+
+`activity_get` returns the newest 80 entries by default and up to 320 with `limit`; older history
+comes from `export_get`. `chat_messages` pages back with `beforeId` only. Fixed costs are always
+in EUR, `recurring_create` and `recurring_update` accept no other `currency`.
 
 `export_get` with `format: csv` returns `{ contentType, content }`.
 
@@ -167,9 +194,15 @@ overwriting:
   `assignedMemberId` (UUID or null) as `expectedAssignedMemberId`.
 - `shopping_set_bought`: read `shopping_list` first and pass `updatedAt` as `expectedUpdatedAt`
   and `boughtAt` (or null) as `expectedBoughtAt`.
-- `note_update` and `event_update` take `expectedUpdatedAt`.
-- On `chore_occurrence_changed`, `shopping_item_changed`, `announcement_changed` or
-  `event_changed`, read again and decide before retrying.
+- `shopping_update`: read `shopping_list` first and pass both `expectedUpdatedAt` and
+  `expectedBoughtAt`.
+- `chore_update` takes an optional `expectedUpdatedAt` from `chores_list` or `chore_get`.
+- `chore_complete_undo`: pass back the `completion` of the `chore_complete` response and the chore
+  state it returned; the app only undoes the caller's latest completion, shortly after it.
+- `note_update` and `event_update` take `expectedUpdatedAt`, and `event_occurrence_change` with
+  action `detach` too.
+- On `chore_occurrence_changed`, `chore_changed`, `shopping_item_changed`, `announcement_changed`
+  or `event_changed`, read again and decide before retrying.
 
 Fixed costs: to book a due charge, call `expense_create` with `recurringExpenseId` and
 `expectedRecurringNextDueAt` (the template's `nextDueAt`); the app creates the expense and advances
@@ -201,6 +234,10 @@ entries. Truncation is never silent — the result carries `"_mcp": { "truncated
 routes that answer `GET` on their own. Everything else is listed as a static resource because the
 app has no single-entity `GET` for it.
 
+Each template also lists its entities in `resources/list` (up to 50, named by title, name or
+description) and completes `{id}`, so a client's resource picker can offer real entries. If the
+listing fails (for example no unique flat is configured), the template just lists nothing.
+
 ## Prompts
 
 | Prompt | Arguments | Purpose |
@@ -217,7 +254,8 @@ confirmation.
 
 Transient failures are retried inside the server: up to two extra attempts (200 ms, 800 ms) for
 `429` with a short `Retry-After`, `5xx` and network errors, always with the same idempotency key on
-writes. Longer rate limits are not slept out — they surface immediately as
+writes. One call, retries included, ends after 45 seconds with `timeout`. A `DELETE` retried after
+an unclear first attempt that finds the row gone answers `{ deleted: true, alreadyGone: true }`. Longer rate limits are not slept out — they surface immediately as
 `ManaWG request failed: too_many_requests retry_after_s=<n>`.
 
 Tool and resource failures never carry upstream messages, URLs or credentials:
@@ -230,5 +268,33 @@ Tool and resource failures never carry upstream messages, URLs or credentials:
 
 ## Not exposed on purpose
 
-The calendar feed URL (contains a feed secret), push subscription endpoints, `test_notification`
-and WG deletion. Set `MANAWG_ALLOW_DESTRUCTIVE=1` to enable the destructive tools listed above.
+Routes the app serves that no tool or resource calls, each with its reason in the
+`INTENTIONALLY_UNEXPOSED` map of `test/api-surface.test.ts`; a new app route fails that test until it
+gets a tool or an entry there:
+
+- deleting a flat and handing over the admin role (irreversible, stay in the app);
+- joining a flat (`POST members`, the invite preview): the invited person does this in the app;
+- push subscriptions and `test_notification` (they belong to a browser);
+- `DELETE recurring-expenses/{id}`, a duplicate of the collection route `recurring_delete` uses.
+
+Set `MANAWG_ALLOW_DESTRUCTIVE=1` to enable the destructive tools listed above.
+
+To keep the tool list short, set `MANAWG_TOOLSETS` to the groups an agent needs, for example
+`MANAWG_TOOLSETS=money,shopping`. Unset or `all` registers every group, and `overview` is always
+registered because every task starts there. Prompts are offered only when all groups they call are
+registered. Resources stay readable either way, so the setting shortens the tool list rather than
+restricting access.
+
+| Group | Sections above |
+| --- | --- |
+| `overview` | Overview |
+| `money` | Money |
+| `recurring` | Fixed costs |
+| `shopping` | Shopping |
+| `supplies` | Supplies |
+| `chores` | Cleaning rota |
+| `notes` | Noticeboard |
+| `chat` | Chat |
+| `calendar` | Calendar and absences |
+| `members` | Members and settings, from `members_list` to `wg_update` |
+| `household` | Calendar feed, imports and `wg_create` |

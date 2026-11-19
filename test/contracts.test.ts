@@ -1,5 +1,6 @@
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { afterEach, expect, it, vi } from 'vitest';
+import type { WgRequest } from '../src/manawg-client.js';
 import { buildServer } from '../src/server.js';
 
 // Input rules that mirror the app's validators but that a stub app does not exercise: calls
@@ -19,7 +20,11 @@ afterEach(async () => {
 
 async function connect() {
   const fake = { call: vi.fn().mockResolvedValue({}) };
-  const server = buildServer(fake, { allowDestructive: true });
+  // The cancel signal is plumbing, not part of the request shape the app sees.
+  const server = buildServer(
+    { call: ({ signal: _signal, ...request }: WgRequest) => fake.call(request) },
+    { allowDestructive: true },
+  );
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'contracts', version: '0.0.0' });
   await Promise.all([client.connect(clientTransport), server.connect(serverTransport)]);
@@ -58,6 +63,23 @@ it.each([
   ['inventory_update', { id: ID, quantity: 1, expectedQuantity: 1.234, expectedUpdatedAt: NOW }],
   ['notifications_update', { notifyStatementEmail: 'yes' }],
   ['export_get', { sections: ['nonsense'] }],
+  ['recurring_update', { id: ID, currency: 'CHF' }],
+  [
+    'recurring_create',
+    {
+      description: 'Rent',
+      amountCents: 90_000,
+      paidByMemberId: ID,
+      nextDueAt: NOW,
+      splits: [split],
+      currency: 'CHF',
+    },
+  ],
+  ['chat_messages', { before: NOW }],
+  ['activity_get', { limit: 79 }],
+  ['activity_get', { limit: 321 }],
+  ['import_preview', { source: 'bogus_csv', payload: 'x' }],
+  ['shopping_update', { id: ID }],
 ])('refuses %s locally when the app would reject %j', async (name, args) => {
   const { client, fake } = await connect();
 
@@ -247,4 +269,42 @@ it('forwards the offset flag of preview splits to settlement_commit', async () =
       },
     },
   });
+});
+
+it('sends the app paging and edit keys', async () => {
+  const { client, fake } = await connect();
+  const call = (name: string, args: Record<string, unknown>) =>
+    client.callTool({ name, arguments: args });
+
+  await call('chat_messages', { beforeId: ID, limit: 20 });
+  expect(fake.call).toHaveBeenLastCalledWith({
+    method: 'GET',
+    path: ['chat', 'messages'],
+    query: { beforeId: ID, limit: 20 },
+  });
+
+  await call('activity_get', { limit: 200 });
+  expect(fake.call).toHaveBeenLastCalledWith({
+    method: 'GET',
+    path: ['activity'],
+    query: { limit: 200 },
+  });
+
+  await call('chore_update', { id: ID, title: 'Bins', expectedUpdatedAt: NOW });
+  expect(fake.call).toHaveBeenLastCalledWith({
+    method: 'PATCH',
+    path: ['chores', ID],
+    body: { title: 'Bins', expectedUpdatedAt: NOW },
+  });
+
+  await call('import_preview', { source: 'tricount_csv', payload: 'x' });
+  expect(fake.call).toHaveBeenLastCalledWith({
+    method: 'POST',
+    path: ['imports', 'preview'],
+    body: { source: 'tricount_csv', payload: 'x' },
+  });
+  await call('import_preview', { source: 'settleup_csv', payload: 'x' });
+  expect(fake.call).toHaveBeenLastCalledWith(
+    expect.objectContaining({ body: { source: 'settleup_csv', payload: 'x' } }),
+  );
 });

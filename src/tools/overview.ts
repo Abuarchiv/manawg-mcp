@@ -51,10 +51,21 @@ export const overviewTools = [
     name: 'activity_get',
     title: 'Read the activity feed',
     description:
-      'Returns the chronological timeline of the newest 80 entries of the flat (expenses, shopping, announcements, chore completions, recurring costs, absences, audit events) plus active reminders (kind, title, detail, href; top 6) for open shopping items, overdue chores and open announcements. Use it to see what happened recently and who did it; it takes no filters or paging. For current totals and balances use dashboard_get, for a complete data dump use export_get. Read-only.',
+      'Returns the newest timeline entries of the flat, 80 by default and up to 320 with limit, plus active reminders. Timeline entries cover expenses, shopping, announcements, chore completions, recurring costs, absences and audit events. Reminders (kind, title, detail, href; top 6, independent of limit) cover open shopping items, overdue chores and open announcements. Use it to see what happened recently and who did it. There are no filters and no cursor; for older history use export_get, for current totals and balances use dashboard_get. Read-only; any member of the connected flat may call it.',
     method: 'GET',
-    input: z.strictObject({}),
+    input: z.strictObject({
+      limit: z
+        .number()
+        .int()
+        .min(80)
+        .max(320)
+        .optional()
+        .describe(
+          'Number of timeline entries to return, from 80 to 320; reminders are not counted. Values below 80 are rejected because the app never returns fewer. Omit for the default of 80.',
+        ),
+    }),
     path: () => ['activity'],
+    query: (input) => ({ limit: input.limit }),
   }),
   defineTool({
     name: 'export_get',

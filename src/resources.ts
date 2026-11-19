@@ -112,6 +112,8 @@ export type ResourceTemplateDef = {
   title: string;
   description: string;
   path: (id: string) => string[];
+  /** Collection route that enumerates the entities, for resources/list and completion. */
+  list: { path: string[]; key: string; label: string; query?: QueryParams };
 };
 
 function entityResource(
@@ -119,6 +121,7 @@ function entityResource(
   title: string,
   description: string,
   segments: string[],
+  list: { key: string; label: string; query?: QueryParams },
 ): ResourceTemplateDef {
   return {
     name,
@@ -126,18 +129,30 @@ function entityResource(
     title,
     description,
     path: (id) => [...segments, id],
+    list: { path: segments, ...list },
   };
 }
 
 /** Single-entity URIs for the routes that answer GET on their own. */
 export const RESOURCE_TEMPLATE_DEFS: ResourceTemplateDef[] = [
-  entityResource('event', 'Event', 'One calendar event by id (events/[id]).', ['events']),
-  entityResource('chore', 'Chore', 'One chore by id (chores/[id]).', ['chores']),
-  entityResource('member', 'Member', 'One member by id (members/[id]).', ['members']),
+  entityResource('event', 'Event', 'One calendar event by id (events/[id]).', ['events'], {
+    key: 'events',
+    label: 'title',
+  }),
+  entityResource('chore', 'Chore', 'One chore by id (chores/[id]).', ['chores'], {
+    key: 'chores',
+    label: 'title',
+  }),
+  entityResource('member', 'Member', 'One member by id (members/[id]).', ['members'], {
+    key: 'members',
+    label: 'name',
+    query: { limit: 50 },
+  }),
   entityResource(
     'recurring',
     'Fixed-cost template',
     'One fixed-cost template by id (recurring-expenses/[id]).',
     ['recurring-expenses'],
+    { key: 'recurringExpenses', label: 'description' },
   ),
 ];

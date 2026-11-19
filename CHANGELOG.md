@@ -1,6 +1,35 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 (2026-11-19)
+
+### Added
+
+- 13 tools, so an agent no longer dead-ends where the app has a route:
+  - `chore_complete_undo` takes back your latest chore completion; `chore_complete` now says to
+    keep its `completion` for it.
+  - `chore_swap_request` asks the flat to take over a chore (a noticeboard post tied to the chore,
+    with push).
+  - `shopping_update` renames a shopping item or changes its quantity, guarded by
+    `expectedUpdatedAt` and `expectedBoughtAt`.
+  - `event_occurrence_change` cancels (`cancel`) or detaches into a one-off event (`detach`) one
+    date of a recurring event. Destructive tool, gated by `MANAWG_ALLOW_DESTRUCTIVE`.
+  - `invite_create`, `invites_list`, `invite_revoke` and `invite_email` manage invite links, the
+    only way to add flatmates (`invite_revoke` is destructive).
+  - `calendar_subscription_create` and, as destructive tools, `calendar_subscription_rotate` and
+    `calendar_subscription_revoke` complete the calendar feed lifecycle next to
+    `calendar_subscription_get`. The feed URL is a secret; the descriptions tell the agent to
+    show it to the user only.
+  - `imports_list` and, as a destructive tool, `import_undo` list and take back an import.
+- Reverse API surface check (`test/api-surface.test.ts`): every route of the app snapshot is either
+  called by a tool or resource or listed with a reason as intentionally not exposed, so a new app
+  route cannot go unnoticed.
+- Resource templates list their entities in `resources/list` and complete `{id}`, so resource
+  pickers in clients such as VS Code can fill them. Listing fails soft.
+- `MANAWG_TOOLSETS` registers only the named tool groups (plus `overview`), so a client that
+  struggles with long tool lists can get a short one. Unset keeps every tool.
+- Server metadata (`description`, `websiteUrl`, icons) in `initialize` and in `server.json`.
+- Clients on the 2026-07-28 protocol revision may cache `tools/list`, `prompts/list`,
+  `resources/templates/list` and `server/discover` for an hour.
 
 ### Changed
 
@@ -9,8 +38,45 @@
 - Every tool input field carries a schema description: where the value comes from, its unit and
   what the default means.
 - `note_react` is marked `idempotentHint`, since it sets the reaction to a given state.
+- `chore_update` takes `title` and `expectedUpdatedAt` (the stale-save guard) and says so; the
+  description no longer claims the title cannot change.
+- `activity_get` gains an optional `limit` (80 to 320, default 80). `chat_messages` pages back
+  with `beforeId` only: the `before` parameter was never read by the app and is gone.
+- `recurring_create` and `recurring_update` accept `currency: "EUR"` only. The app rejects
+  anything else with `recurring_currency_unsupported`, so the schema now refuses it locally.
+- `import_preview` and `import_commit` describe all five sources, including `tricount_csv` and
+  `settleup_csv`.
+- Every call has one 45 second deadline across attempts, retries and the flat lookup. When it
+  passes, the tool answers `timeout`.
+- The release workflow checks the tag against `package.json`, `server.json` and the changelog,
+  sets `latest` only for final releases and creates the GitHub Release from this file.
+  `pnpm smoke` runs in CI without credentials.
 - Fixes since 0.2.1: app API contract matched, HTTP transport hardened, `capPayload` no longer
   loops on one-item arrays, `glama.json` added.
+
+### Fixed
+
+- A `401` caused by a wrong flat or membership (`not_a_member`, `member_deactivated`) no longer
+  wipes the session; only `auth_required` triggers a refresh. A refresh uses the session's own
+  refresh token, and the bootstrap token is tried at most once per process.
+- Two processes sharing the session cache no longer log each other out: when a refresh is
+  rejected, a newer session written by the other process is adopted instead of deleted. The cache
+  file is written to a temporary file with mode `0600` and renamed over the old one.
+- A retried `DELETE` that finds the row already gone returns `{ deleted: true, alreadyGone: true }`
+  instead of a misleading `404`. A `PATCH` with an `expected*` guard is no longer replayed after
+  a network error, since the first attempt may have been applied.
+
+### Security
+
+- CORS: the preflight answers the headers the browser asks for (`Access-Control-Request-Headers`,
+  `Vary`), and the default allow list includes `mcp-method` and `mcp-name`, so MCP Inspector and
+  2.x SDK clients get through it.
+- `MANAWG_HTTP_CORS=1` without an API key (keyless loopback) no longer sends
+  `Access-Control-Allow-Origin: *` and no longer skips the Origin check: only `localhost`,
+  `127.0.0.1` and `[::1]` origins pass, others get `403` (preflight included). With an API key or
+  OAuth the answer stays `*`, since a foreign page holds no credential. This changes behaviour for
+  keyless self-hosters who called the endpoint from a non-loopback web page; the hosted server
+  uses OAuth and is unaffected.
 
 ## 0.2.1 (2026-11-04)
 

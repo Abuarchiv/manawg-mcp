@@ -60,23 +60,25 @@ The assistant acts as your account, in all your flats, with the same rights you 
   does.
 - **It cannot** delete a flat, change your account or sign-in, or move money. ManaWG never moves
   money; settling up only records what you paid each other.
-- **The hosted server leaves out all 16 destructive tools**: deleting expenses, posts or items,
-  changing flat or member settings, sending reminders and committing imports. Read tools carry
+- **The hosted server leaves out all 21 destructive tools**: deleting expenses, posts or items,
+  changing flat or member settings, sending reminders, committing or undoing imports, revoking
+  invites and rotating or revoking the calendar feed. Read tools carry
   `readOnlyHint`, so clients can ask before every other call.
 - **You stay in control.** Every assistant you connected is listed in the app under
   Settings → Access, and you can disconnect each one there.
 
-The full list of 74 tools, 13 resources and 4 prompts is in [docs/tools.md](docs/tools.md).
+The full list of 87 tools, 13 resources and 4 prompts is in [docs/tools.md](docs/tools.md).
 
 | Area | Examples |
 | --- | --- |
 | Overview | `wg_overview`, `dashboard_get`, `activity_get`, `export_get` |
 | Money | `expense_create`, `balances_get`, `settlement_preview`, `cash_payment_record` |
 | Fixed costs | `recurring_list`, `recurring_create`, `recurring_advance` |
-| Shopping and supplies | `shopping_add`, `shopping_set_bought`, `inventory_consume` |
-| Cleaning rota | `chores_list`, `chore_complete`, `absence_create` |
+| Shopping and supplies | `shopping_add`, `shopping_set_bought`, `shopping_update`, `inventory_consume` |
+| Cleaning rota | `chores_list`, `chore_complete`, `chore_complete_undo`, `chore_swap_request`, `absence_create` |
 | Noticeboard and chat | `note_create`, `note_comment`, `chat_send`, `chat_unread` |
-| Calendar | `events_list`, `event_create`, `event_update` |
+| Calendar | `events_list`, `event_create`, `event_update`, `event_occurrence_change` |
+| Flatmates and imports | `invite_create`, `invite_email`, `import_preview`, `import_undo` |
 | Prompts | `daily_brief`, `shopping_run`, `payment_reminder`, `settlement_plan` |
 
 ## How it works

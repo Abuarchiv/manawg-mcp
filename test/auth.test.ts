@@ -1,6 +1,15 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, expect, it, vi } from 'vitest';
 import { createSessionController, MAX_CHUNK_SIZE, sessionCookiePairs } from '../src/auth.js';
 import type { SupabaseAuthConfig } from '../src/config.js';
@@ -242,21 +251,103 @@ it('ingests chunked Set-Cookie headers from the app', async () => {
   expect(header).toBe(pairs.map((pair) => `${pair.name}=${pair.value}`).join('; '));
 });
 
-it('drops the cached session on invalidate and re-authenticates', async () => {
-  const session = freshSession();
+it('refreshes with its own refresh token after invalidate and keeps the cache', async () => {
   const path = cachePath();
-  writeFileSync(path, JSON.stringify(session), { mode: 0o600 });
-  fetchMock.mockResolvedValue(grantResponse({ ...freshSession(), access_token: 'at-second' }));
+  writeFileSync(path, JSON.stringify(freshSession()), { mode: 0o600 });
+  fetchMock.mockResolvedValue(
+    grantResponse({
+      ...freshSession(),
+      access_token: 'at-second',
+      refresh_token: 'refresh-token-2',
+    }),
+  );
   const controller = createSessionController(authConfig({ sessionCachePath: path }), fetchMock);
 
   await controller.cookieHeader();
+  const before = readFileSync(path, 'utf8');
   controller.invalidate();
-  expect(existsSync(path)).toBe(false);
+  expect(readFileSync(path, 'utf8')).toBe(before);
 
   const header = await controller.cookieHeader();
 
   expect(fetchMock).toHaveBeenCalledTimes(1);
+  expect(signInCall().url).toBe(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`);
+  expect(JSON.parse(String(signInCall().init.body)).refresh_token).toBe('refresh-token-1');
   expect(decodeCookieHeader(header)).toContain('at-second');
+});
+
+it('adopts a session a sibling rotated on invalidate and leaves the cache untouched', async () => {
+  const path = cachePath();
+  writeFileSync(path, JSON.stringify(freshSession()), { mode: 0o600 });
+  const controller = createSessionController(authConfig({ sessionCachePath: path }), fetchMock);
+  await controller.cookieHeader();
+
+  const rotated = {
+    ...freshSession(7200),
+    access_token: 'at-sibling',
+    refresh_token: 'refresh-token-sibling',
+  };
+  writeFileSync(path, JSON.stringify(rotated), { mode: 0o600 });
+  const before = readFileSync(path, 'utf8');
+
+  controller.invalidate();
+
+  expect(readFileSync(path, 'utf8')).toBe(before);
+  expect(decodeCookieHeader(await controller.cookieHeader())).toContain('at-sibling');
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
+it('never replays the spent bootstrap token after invalidate (foreign wgCode, then valid call)', async () => {
+  fetchMock
+    .mockResolvedValueOnce(grantResponse({ ...freshSession(), refresh_token: 'rotated-1' }))
+    .mockResolvedValueOnce(grantResponse({ ...freshSession(), refresh_token: 'rotated-2' }));
+  const controller = createSessionController(
+    authConfig({ bootstrapRefreshToken: 'bootstrap-token' }),
+    fetchMock,
+  );
+
+  await controller.cookieHeader();
+  controller.invalidate();
+  await controller.cookieHeader();
+
+  const bodies = fetchMock.mock.calls.map((call) => JSON.parse(String(call[1]?.body)));
+  expect(bodies.map((body) => body.refresh_token)).toEqual(['bootstrap-token', 'rotated-1']);
+});
+
+it('adopts the session a sibling process rotated instead of deleting it', async () => {
+  const path = cachePath();
+  const stale = { ...freshSession(-120), refresh_token: 'refresh-token-1' };
+  writeFileSync(path, JSON.stringify(stale), { mode: 0o600 });
+  const sibling = {
+    ...freshSession(),
+    access_token: 'at-sibling',
+    refresh_token: 'refresh-token-2',
+  };
+  // The sibling rotates the token while this process' refresh with the old one is in flight.
+  fetchMock.mockImplementation(async () => {
+    writeFileSync(path, JSON.stringify(sibling), { mode: 0o600 });
+    return new Response('{}', { status: 400 });
+  });
+  const controller = createSessionController(authConfig({ sessionCachePath: path }), fetchMock);
+
+  const header = await controller.cookieHeader();
+
+  expect(decodeCookieHeader(header)).toContain('at-sibling');
+  expect(JSON.parse(readFileSync(path, 'utf8')).refresh_token).toBe('refresh-token-2');
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+it('replaces a wider cache file atomically with an owner-only one', async () => {
+  const path = cachePath();
+  writeFileSync(path, '{}', { mode: 0o644 });
+  chmodSync(path, 0o644);
+  fetchMock.mockResolvedValue(grantResponse(freshSession()));
+  const controller = createSessionController(authConfig({ sessionCachePath: path }), fetchMock);
+
+  await controller.cookieHeader();
+
+  expect(statSync(path).mode & 0o777).toBe(0o600);
+  expect(readdirSync(dirname(path))).toEqual(['session.json']);
 });
 
 it('ignores invalidate while a sign-in is already in flight', async () => {

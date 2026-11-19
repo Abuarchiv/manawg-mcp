@@ -42,6 +42,7 @@ export const SAFE_UPSTREAM_CODES = new Set([
   'chore_not_found',
   'chore_occurrence_changed',
   'comment_invalid',
+  'completion_not_found',
   'comment_not_found',
   'completed_at_invalid',
   'conflict',
@@ -91,6 +92,8 @@ export const SAFE_UPSTREAM_CODES = new Set([
   'idempotency_conflict',
   'idempotency_key_required',
   'idempotency_key_unavailable',
+  'idempotency_response_invalid',
+  'idempotency_response_pending',
   'idempotency_response_unavailable',
   'idempotency_retryable',
   'image_invalid',
@@ -128,12 +131,17 @@ export const SAFE_UPSTREAM_CODES = new Set([
   'invalid_state',
   'invalid_token',
   'inventory_item_duplicate',
+  'inventory_purchase_changed',
+  'invite_limit_reached',
+  'invite_not_found',
+  'invite_rate_limited',
   'item_not_found',
   'joining_disabled',
   'kind_invalid',
   'limit_exceeded',
   'limits_exceeded',
   'location_invalid',
+  'mail_unavailable',
   'mapping_incomplete',
   'member_context_changed',
   'member_deactivated',
@@ -163,6 +171,7 @@ export const SAFE_UPSTREAM_CODES = new Set([
   'not_admin',
   'not_creditor',
   'not_found',
+  'not_latest_completion',
   'not_owner',
   'not_party',
   'not_party_to_debt',
@@ -240,6 +249,8 @@ export const SAFE_UPSTREAM_CODES = new Set([
   'too_many_requests',
   'too_many_rows',
   'unauthorized',
+  'undo_expired',
+  'undo_invalid',
   'unit_invalid',
   'unsupported_currency',
   'unverified_provider',
@@ -306,4 +317,16 @@ export function describeError(error: unknown): string {
     message = `${message} retry_after_s=${error.retryAfterSeconds}`;
   }
   return message;
+}
+
+/** One server-side log line for a failed tool call; carries codes and names only, never upstream bodies. */
+export function describeFailure(tool: string, error: unknown): string {
+  if (error instanceof ManaWgError) {
+    const retry =
+      error.retryAfterSeconds !== undefined ? ` retry_after_s=${error.retryAfterSeconds}` : '';
+    return `tool_error tool=${tool} code=${error.code} status=${error.status}${retry}`;
+  }
+  const name = error instanceof Error ? error.name : typeof error;
+  const stack = error instanceof Error && error.stack ? `\n${error.stack}` : '';
+  return `tool_error tool=${tool} kind=internal name=${name}${stack}`;
 }

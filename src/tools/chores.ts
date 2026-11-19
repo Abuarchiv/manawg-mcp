@@ -71,10 +71,17 @@ export const choreTools = [
     name: 'chore_update',
     title: 'Edit a chore',
     description:
-      'Change the assignee, next due date or rhythm of an existing chore; send only the fields to change. Use this to reassign or reschedule. To record that the chore was done use chore_complete, which also rotates the assignee. The title cannot be changed with this tool. Any member may edit. Handing a chore due within 24 hours to another member sends that member a push notification. Returns chore_not_found for an unknown id, member_not_in_wg for an assignee who is not an active member and chore_changed if the schedule was changed by someone else in the meantime: read the chore again and retry. Returns the updated chore.',
+      'Change the title, assignee, next due date or rhythm of an existing chore; send only the fields to change. Use this to rename, reassign or reschedule. To record that the chore was done use chore_complete, which also rotates the assignee. Any member may edit. Handing a chore due within 24 hours to another member sends that member a push notification. Pass expectedUpdatedAt (the updatedAt from chore_get or chores_list) to reject the edit when someone else saved the chore since. Returns chore_not_found for an unknown id, member_not_in_wg for an assignee who is not an active member and chore_changed if the chore was changed by someone else in the meantime: read the chore again and retry. Returns the updated chore.',
     method: 'PATCH',
     input: z.strictObject({
       id: uuid.describe('Id of the chore, from chores_list.'),
+      title: z
+        .string()
+        .trim()
+        .min(1)
+        .max(120)
+        .optional()
+        .describe('New name of the chore, e.g. "Bathroom". Omit to keep the current one.'),
       assignedMemberId: uuid
         .nullable()
         .optional()
@@ -96,6 +103,11 @@ export const choreTools = [
       recurrenceType: recurrenceType
         .optional()
         .describe('New unit of intervalDays: days or months. Omit to keep the current one.'),
+      expectedUpdatedAt: isoDateTime
+        .optional()
+        .describe(
+          'The updatedAt of the chore as last read from chore_get or chores_list, ISO 8601 with offset. When set, the edit only applies if the chore is unchanged since; otherwise chore_changed. Omit to skip the check.',
+        ),
     }),
     path: (input) => ['chores', input.id],
     body: (input) => {
@@ -107,7 +119,7 @@ export const choreTools = [
     name: 'chore_complete',
     title: 'Complete a chore',
     description:
-      "Mark the current round of a chore as done by the calling member. The app schedules the next due date from the cadence, moves the chore to the next available member in the rotation (skipping absent members), and closes an open swap request for it. Call chores_list first and pass the chore's current nextDueAt and assignedMemberId as the expected values so a stale or double completion is rejected. Returns chore_occurrence_changed if the chore moved on since you read it: read again and decide again, do not retry blindly. Returns chore_already_completed if this round was just completed. Not for editing a chore: use chore_update.",
+      "Mark the current round of a chore as done by the calling member. The app schedules the next due date from the cadence, moves the chore to the next available member in the rotation (skipping absent members), and closes an open swap request for it. Call chores_list first and pass the chore's current nextDueAt and assignedMemberId as the expected values so a stale or double completion is rejected. Returns chore_occurrence_changed if the chore moved on since you read it: read again and decide again, do not retry blindly. Returns chore_already_completed if this round was just completed. Not for editing a chore: use chore_update. The response holds the updated chore and completion { id, previous { nextDueAt, assignedMemberId, anchorAt } }; keep them to take a mistaken completion back with chore_complete_undo.",
     method: 'POST',
     input: z.strictObject({
       id: uuid.describe('Id of the chore, from chores_list.'),
@@ -125,6 +137,47 @@ export const choreTools = [
       expectedNextDueAt: input.expectedNextDueAt,
       expectedAssignedMemberId: input.expectedAssignedMemberId,
     }),
+  }),
+  defineTool({
+    name: 'chore_complete_undo',
+    title: 'Undo a chore completion',
+    description:
+      "Take back the caller's own latest completion of a chore: the app restores the due date, assignee and anchor from before the completion, reopens the swap request the completion closed and removes the completion from the history. Use it right after chore_complete when it was a mistake; to change a chore for any other reason use chore_update. Only the member who completed can undo (not_owner for others), only the latest completion, and only within about two minutes after the chore last changed (undo_expired afterwards, not_latest_completion if a later completion exists, completion_not_found if it was already undone). Returns chore_changed if the chore moved on since the completion: read it again. Not idempotent: a second call fails. Pass the values from the chore_complete response. Returns the restored chore.",
+    method: 'POST',
+    input: z.strictObject({
+      id: uuid.describe('Id of the chore, from chores_list.'),
+      completionId: uuid.describe('The completion.id from the chore_complete response.'),
+      previous: z
+        .strictObject({
+          nextDueAt: isoDateTime.describe(
+            'The completion.previous.nextDueAt from the chore_complete response.',
+          ),
+          assignedMemberId: uuid
+            .nullable()
+            .describe(
+              'The completion.previous.assignedMemberId from the chore_complete response, or null if the chore had no assignee.',
+            ),
+          anchorAt: isoDateTime.describe(
+            'The completion.previous.anchorAt from the chore_complete response.',
+          ),
+        })
+        .describe(
+          'The chore as it was before the completion, as the chore_complete response returned it.',
+        ),
+      expectedNextDueAt: isoDateTime.describe(
+        'The nextDueAt of the chore after the completion, i.e. chore.nextDueAt from the chore_complete response. The undo only applies while the chore still has it.',
+      ),
+      expectedAssignedMemberId: uuid
+        .nullable()
+        .describe(
+          'The assignedMemberId of the chore after the completion, i.e. chore.assignedMemberId from the chore_complete response, or null if it has none.',
+        ),
+    }),
+    path: (input) => ['chores', input.id, 'complete', 'undo'],
+    body: (input) => {
+      const { id, ...body } = input;
+      return body;
+    },
   }),
   defineTool({
     name: 'chore_delete',

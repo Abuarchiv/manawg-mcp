@@ -18,6 +18,8 @@ export type WgRequest = {
   scope?: RequestScope;
   /** Share code of the flat; falls back to the configured default, then to the only flat. */
   wgCode?: string;
+  /** Aborts the whole call, retries included, e.g. when the MCP client disconnects. */
+  signal?: AbortSignal;
 };
 
 export type ManaWgClient = {
@@ -31,6 +33,8 @@ export type Credentials = {
   ingest?(response: Response): Promise<void>;
   /** Drops cached credentials after a 401; returns true when a fresh attempt can succeed. */
   invalidate?(): boolean;
+  /** Verified identity of the user these credentials act for; lets per-request clients share lookups. */
+  subject?: string;
 };
 
 /** The server's own signed-in account, sent as the `@supabase/ssr` session cookie. */
@@ -47,22 +51,32 @@ export function sessionCredentials(session: SessionController): Credentials {
   };
 }
 
-/** A user's verified OAuth access token, forwarded unchanged. */
-export function bearerCredentials(token: string): Credentials {
+/**
+ * A user's verified OAuth access token, forwarded unchanged. `subject` is the user id from the
+ * verified token; pass it only for a token that has been verified.
+ */
+export function bearerCredentials(token: string, subject?: string): Credentials {
   return {
     apply: async (headers) => {
       headers.set('authorization', `Bearer ${token}`);
     },
+    ...(subject ? { subject } : {}),
   };
 }
 
-const AUTH_RETRY_CODES = new Set(['auth_required', 'member_deactivated', 'not_a_member']);
+/**
+ * A 401 means the session is gone only for `auth_required`. `not_a_member` and
+ * `member_deactivated` also come as 401, but they answer for the flat, not the session.
+ */
+const AUTH_RETRY_CODES = new Set(['auth_required']);
 
 /** 429 plus the transient server failures worth another attempt. */
 const RETRYABLE_STATUS = new Set([429, 500, 502, 503, 504]);
 const DEFAULT_RETRY_DELAYS_MS = [200, 800];
 /** Longer rate limits are surfaced instead of slept out inside a tool call. */
 const DEFAULT_MAX_AUTO_RETRY_DELAY_MS = 2_000;
+/** Everything one tool call may spend, retries and the flat lookup included (hosted limit: 60 s). */
+const CALL_DEADLINE_MS = 45_000;
 
 export type ClientRetryOptions = {
   retryDelaysMs?: number[];
@@ -73,11 +87,43 @@ function truncate(value: string): string {
   return value.length > 400 ? `${value.slice(0, 400)}…` : value;
 }
 
-function sleep(ms: number): Promise<void> {
+function sleep(ms: number, signal: AbortSignal): Promise<void> {
+  if (signal.aborted) {
+    return Promise.resolve();
+  }
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms);
+    const done = () => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', done);
+      resolve();
+    };
+    const timer = setTimeout(done, ms);
     timer.unref?.();
+    signal.addEventListener('abort', done, { once: true });
   });
+}
+
+/** Waits for `promise`, but gives up with a timeout as soon as this caller's own `signal` aborts. */
+function untilAborted<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) {
+    return Promise.reject(new ManaWgError('timeout', 0));
+  }
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(new ManaWgError('timeout', 0));
+    signal.addEventListener('abort', onAbort, { once: true });
+    promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+  });
+}
+
+/** An update guarded by an `expected*` field must not be replayed after an unknown outcome. */
+function isGuardedUpdate(request: WgRequest): boolean {
+  const body = request.body;
+  return (
+    request.method === 'PATCH' &&
+    typeof body === 'object' &&
+    body !== null &&
+    Object.keys(body).some((name) => name.startsWith('expected'))
+  );
 }
 
 function retryAfterSeconds(response: Response): number | undefined {
@@ -124,6 +170,13 @@ function safeCode(payload: unknown, status: number): string {
     return 'internal_error';
   }
   return `upstream_http_${status}`;
+}
+
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { 'content-type': 'application/json' },
+  });
 }
 
 function validationDetails(payload: unknown): string | undefined {
@@ -182,6 +235,12 @@ async function peekJson(response: Response): Promise<unknown> {
 }
 
 const ONLY_WG_TTL_MS = 60_000;
+const MAX_SHARED_ONLY_WG = 500;
+
+type OnlyWgEntry = { code: Promise<string>; until: number };
+
+/** Hosted mode builds a client per request; their lookups are shared per verified user. */
+const sharedOnlyWg = new Map<string, OnlyWgEntry>();
 
 /** Codes after which a cached "only flat" may be stale (left, deactivated or deleted). */
 const MEMBERSHIP_GONE_CODES = new Set(['not_a_member', 'member_deactivated', 'wg_not_found']);
@@ -208,7 +267,8 @@ export function createManaWgClient(
   const retryDelaysMs = retryOptions.retryDelaysMs ?? DEFAULT_RETRY_DELAYS_MS;
   const maxAutoRetryDelayMs = retryOptions.maxAutoRetryDelayMs ?? DEFAULT_MAX_AUTO_RETRY_DELAY_MS;
   /** The account's only flat; joining or creating another one must not keep it valid long. */
-  let resolvedWgCode: { code: Promise<string>; until: number } | undefined;
+  const onlyWgStore = credentials?.subject ? sharedOnlyWg : new Map<string, OnlyWgEntry>();
+  const onlyWgKey = `${config.baseUrl}\n${credentials?.subject ?? ''}`;
 
   function buildUrl(request: WgRequest, wgCode: string | undefined): string {
     const base = wgCode === undefined ? [] : [wgCode];
@@ -235,6 +295,7 @@ export function createManaWgClient(
   async function perform(
     request: WgRequest,
     wgCode: string | undefined,
+    deadline: AbortSignal,
     idempotencyKey?: string,
     retried = false,
   ): Promise<Response> {
@@ -259,7 +320,7 @@ export function createManaWgClient(
       method,
       headers,
       redirect: 'error',
-      signal: AbortSignal.timeout(config.timeoutMs),
+      signal: AbortSignal.any([AbortSignal.timeout(config.timeoutMs), deadline]),
     };
     if (request.body !== undefined || method === 'DELETE') {
       init.body = JSON.stringify(request.body ?? {});
@@ -269,7 +330,9 @@ export function createManaWgClient(
     try {
       response = await fetchImpl(buildUrl(request, wgCode), init);
     } catch {
-      throw new ManaWgError('upstream_network_error', 0);
+      throw deadline.aborted
+        ? new ManaWgError('timeout', 0)
+        : new ManaWgError('upstream_network_error', 0);
     }
     await credentials?.ingest?.(response);
 
@@ -277,7 +340,7 @@ export function createManaWgClient(
     if (!retried && credentials?.invalidate && response.status === 401) {
       const code = safeCode(await peekJson(response), response.status);
       if (AUTH_RETRY_CODES.has(code) && credentials.invalidate()) {
-        return perform(request, wgCode, idempotencyKey, true);
+        return perform(request, wgCode, deadline, idempotencyKey, true);
       }
     }
     return response;
@@ -287,61 +350,93 @@ export function createManaWgClient(
   async function send(
     request: WgRequest,
     wgCode: string | undefined,
+    deadline: AbortSignal,
     idempotencyKey?: string,
   ): Promise<Response> {
+    /** An earlier attempt may have reached the app without us seeing its answer. */
+    let outcomeUnknown = false;
     for (let attempt = 0; ; attempt++) {
       const fallbackMs = retryDelaysMs[attempt];
       let response: Response;
       try {
-        response = await perform(request, wgCode, idempotencyKey);
+        response = await perform(request, wgCode, deadline, idempotencyKey);
       } catch (error) {
         const retryable =
           fallbackMs !== undefined &&
           error instanceof ManaWgError &&
-          error.code === 'upstream_network_error';
+          error.code === 'upstream_network_error' &&
+          !isGuardedUpdate(request);
         if (!retryable) {
           throw error;
         }
-        await sleep(fallbackMs);
+        outcomeUnknown = true;
+        await sleep(fallbackMs, deadline);
         continue;
       }
 
+      if (outcomeUnknown && request.method === 'DELETE' && response.status === 404) {
+        // Most delete routes keep no idempotency record: the row gone now means an earlier
+        // attempt did delete it.
+        const code = safeCode(await peekJson(response), response.status);
+        if (code !== 'wg_not_found') {
+          await response.body?.cancel().catch(() => undefined);
+          return jsonResponse({ deleted: true, alreadyGone: true });
+        }
+      }
+
       const delay = fallbackMs === undefined ? undefined : nextDelay(response, fallbackMs);
-      if (delay === undefined) {
+      // A 5xx may come after the update was committed, and the replay would then trip over
+      // its own expected* guard. Only a 429 is safe to repeat: the request never ran.
+      if (delay === undefined || (isGuardedUpdate(request) && response.status !== 429)) {
         return response;
+      }
+      if (response.status !== 429) {
+        outcomeUnknown = true;
       }
       await response.body?.cancel().catch(() => undefined);
       if (delay > 0) {
-        await sleep(delay);
+        await sleep(delay, deadline);
       }
     }
   }
 
-  /** The account's only flat, looked up at most once a minute per client. */
-  function onlyWg(): Promise<string> {
-    if (resolvedWgCode && resolvedWgCode.until > Date.now()) {
-      return resolvedWgCode.code;
+  /** The account's only flat, looked up at most once a minute per client (per user when shared). */
+  function onlyWg(deadline: AbortSignal): Promise<string> {
+    const cached = onlyWgStore.get(onlyWgKey);
+    if (cached && cached.until > Date.now()) {
+      return untilAborted(cached.code, deadline);
     }
     const entry = {
-      code: send({ path: ['mine'], scope: 'account' }, undefined)
+      // Shared between requests, so it must not die with the first caller's deadline or signal.
+      code: send(
+        { path: ['mine'], scope: 'account' },
+        undefined,
+        AbortSignal.timeout(CALL_DEADLINE_MS),
+      )
         .then(decode)
         .then(onlyWgCode),
       until: Date.now() + ONLY_WG_TTL_MS,
     };
-    resolvedWgCode = entry;
+    for (const [key, other] of onlyWgStore) {
+      if (other.until <= Date.now()) onlyWgStore.delete(key);
+    }
+    if (onlyWgStore.size >= MAX_SHARED_ONLY_WG) {
+      onlyWgStore.delete(onlyWgStore.keys().next().value as string);
+    }
+    onlyWgStore.set(onlyWgKey, entry);
     entry.code.catch(() => {
-      if (resolvedWgCode === entry) resolvedWgCode = undefined;
+      if (onlyWgStore.get(onlyWgKey) === entry) onlyWgStore.delete(onlyWgKey);
     });
-    return entry.code;
+    return untilAborted(entry.code, deadline);
   }
 
-  async function wgCodeFor(request: WgRequest): Promise<string | undefined> {
+  async function wgCodeFor(request: WgRequest, deadline: AbortSignal): Promise<string | undefined> {
     if (request.scope === 'account') {
       return undefined;
     }
     const explicit = request.wgCode?.trim().toUpperCase() || config.defaultWgCode;
     if (explicit === undefined) {
-      return onlyWg();
+      return onlyWg(deadline);
     }
     if (!SHARE_CODE_PATTERN.test(explicit)) {
       throw new ManaWgError('invalid_share_code', 400);
@@ -351,18 +446,22 @@ export function createManaWgClient(
 
   return {
     async call(request: WgRequest): Promise<unknown> {
-      const wgCode = await wgCodeFor(request);
+      const deadline = AbortSignal.any([
+        AbortSignal.timeout(CALL_DEADLINE_MS),
+        ...(request.signal ? [request.signal] : []),
+      ]);
+      const wgCode = await wgCodeFor(request, deadline);
       const idempotencyKey = (request.method ?? 'GET') === 'GET' ? undefined : randomUUID();
       try {
-        const payload = await decode(await send(request, wgCode, idempotencyKey));
+        const payload = await decode(await send(request, wgCode, deadline, idempotencyKey));
         if (request.scope === 'account' && idempotencyKey) {
           // A new flat (wg_create) means the account may no longer have just one.
-          resolvedWgCode = undefined;
+          onlyWgStore.delete(onlyWgKey);
         }
         return payload;
       } catch (error) {
         if (error instanceof ManaWgError && MEMBERSHIP_GONE_CODES.has(error.code)) {
-          resolvedWgCode = undefined;
+          onlyWgStore.delete(onlyWgKey);
         }
         throw error;
       }

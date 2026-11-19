@@ -1,5 +1,8 @@
 import { expect, it } from 'vitest';
 import { loadConfig } from '../src/config.js';
+import { PROMPT_DEFS } from '../src/prompts.js';
+import { selectTools, TOOL_DEFS } from '../src/tools/registry.js';
+import { toolsetEnabled } from '../src/toolsets.js';
 
 function validEnv(): NodeJS.ProcessEnv {
   return {
@@ -211,4 +214,34 @@ it('ignores the retired member identity variables', () => {
 
   expect(config).not.toHaveProperty('memberId');
   expect(config).not.toHaveProperty('identityCachePath');
+});
+
+it('narrows the tool list to MANAWG_TOOLSETS and keeps overview', () => {
+  expect(loadConfig(validEnv()).toolsets).toBeUndefined();
+  expect(loadConfig({ ...validEnv(), MANAWG_TOOLSETS: 'all' }).toolsets).toBeUndefined();
+
+  const toolsets = loadConfig({
+    ...validEnv(),
+    MANAWG_TOOLSETS: ' Money, shopping,money ',
+  }).toolsets;
+  expect(toolsets).toEqual(['money', 'shopping']);
+  const names = selectTools(TOOL_DEFS, false, toolsets).map((tool) => tool.name);
+  expect(names).toContain('wg_overview');
+  expect(names).toContain('expense_create');
+  expect(names).toContain('shopping_add');
+  expect(names).not.toContain('chat_send');
+  expect(names).not.toContain('expense_delete');
+
+  expect(
+    thrownMessage(() => loadConfig({ ...validEnv(), MANAWG_TOOLSETS: 'money,pets' })),
+  ).toContain('unknown toolsets: pets');
+  expect(thrownMessage(() => loadConfig({ ...validEnv(), MANAWG_TOOLSETS: ',' }))).toContain(
+    'names no toolset',
+  );
+
+  // Prompts that walk through unregistered tools are not offered.
+  const prompts = PROMPT_DEFS.filter((def) =>
+    def.toolsets.every((toolset) => toolsetEnabled(toolset, toolsets)),
+  ).map((def) => def.name);
+  expect(prompts).toEqual(['payment_reminder', 'settlement_plan']);
 });

@@ -9,6 +9,7 @@ import {
   type OAuthTokenVerifier,
   originValidationResponse,
   requireBearerAuth,
+  validateOriginHeader,
 } from '@modelcontextprotocol/server';
 import { isLoopbackHost, type OAuthConfig } from './config.js';
 import { createDiscovery, protectedResourceMetadataUrl } from './oauth.js';
@@ -46,6 +47,8 @@ const CORS_ALLOW_HEADERS = [
   'accept',
   'mcp-protocol-version',
   'mcp-session-id',
+  'mcp-method',
+  'mcp-name',
 ].join(', ');
 const CORS_ALLOW_METHODS = 'GET, POST, DELETE, OPTIONS';
 
@@ -63,9 +66,23 @@ function apiKeyMatches(header: string | null, apiKey: string): boolean {
   return timingSafeEqual(presented, expected);
 }
 
-function withCors(response: Response): Response {
+/**
+ * With a credential (API key, OAuth token) a foreign page has nothing to present, so any origin
+ * may call. The keyless mode would hand the signed-in account to every page the user opens:
+ * there, only a loopback origin (MCP Inspector on localhost) is echoed back.
+ */
+function allowedOrigin(request: Request, auth: HttpAuth): string | undefined {
+  if (auth.kind !== 'open') return '*';
+  const origin = request.headers.get('origin');
+  return origin && validateOriginHeader(origin, localhostAllowedOrigins()).ok ? origin : undefined;
+}
+
+function withCors(response: Response, request: Request, auth: HttpAuth): Response {
   const headers = new Headers(response.headers);
-  headers.set('access-control-allow-origin', '*');
+  const origin = allowedOrigin(request, auth);
+  if (origin) {
+    headers.set('access-control-allow-origin', origin);
+  }
   headers.set('access-control-expose-headers', 'www-authenticate, mcp-session-id');
   headers.append('vary', 'origin');
   return new Response(response.body, {
@@ -102,10 +119,9 @@ export function createHttpHandler(options: HttpHandlerOptions): HttpHandler {
 
   async function serveMcp(request: Request): Promise<Response> {
     if (options.localOnly) {
-      // With CORS on, the operator allows browser pages from any origin; the Host check stays.
       const rejected =
         hostHeaderValidationResponse(request, localhostAllowedHostnames()) ??
-        (options.cors ? undefined : originValidationResponse(request, localhostAllowedOrigins()));
+        originValidationResponse(request, localhostAllowedOrigins());
       if (rejected) {
         return rejected;
       }
@@ -115,8 +131,11 @@ export function createHttpHandler(options: HttpHandlerOptions): HttpHandler {
         status: 204,
         headers: {
           'access-control-allow-methods': CORS_ALLOW_METHODS,
-          'access-control-allow-headers': CORS_ALLOW_HEADERS,
+          // Clients add headers of their own (the 2.x SDK sends mcp-method and mcp-name).
+          'access-control-allow-headers':
+            request.headers.get('access-control-request-headers') || CORS_ALLOW_HEADERS,
           'access-control-max-age': '600',
+          vary: 'access-control-request-headers',
         },
       });
     }
@@ -157,7 +176,7 @@ export function createHttpHandler(options: HttpHandlerOptions): HttpHandler {
   return {
     fetch: async (request) => {
       const response = await route(request);
-      return options.cors ? withCors(response) : response;
+      return options.cors ? withCors(response, request, auth) : response;
     },
     setReady: (value) => {
       ready = value;

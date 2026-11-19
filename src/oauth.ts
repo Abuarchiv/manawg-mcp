@@ -75,6 +75,8 @@ export function supabaseTokenVerifier(
         clientId,
         scopes: scope.split(' ').filter(Boolean),
         expiresAt: claims.exp as number,
+        // `sub` is guaranteed by requiredClaims; it keys per-user caches across requests.
+        extra: { sub: claims.sub },
       };
     },
   };

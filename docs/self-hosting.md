@@ -73,13 +73,14 @@ claude mcp add manawg --env-file ~/.config/manawg-mcp/env -- node "$(pwd)/dist/i
 | `MANAWG_EMAIL` + `MANAWG_PASSWORD` | session, one of | Password sign-in instead of a refresh token |
 | `MANAWG_PUBLIC_URL` | oauth | Public `https` URL of the MCP endpoint, e.g. `https://mcp.manawg.example/mcp` |
 | `MANAWG_ALLOW_DESTRUCTIVE` | no | `1`/`true` registers destructive tools (default off) |
+| `MANAWG_TOOLSETS` | no | Comma-separated tool groups to register, e.g. `money,shopping,chores` (default `all`). `overview` is always on. Groups: `overview`, `money`, `recurring`, `shopping`, `supplies`, `chores`, `notes`, `chat`, `calendar`, `members`, `household` |
 | `MANAWG_SESSION_CACHE` | no | Session cache path (default `~/.config/manawg-mcp/session.json`) |
 | `MANAWG_TRANSPORT` | no | `stdio` (default) or `http` |
 | `MANAWG_HTTP_HOST` | no | Bind address for `http` (default `127.0.0.1`, `0.0.0.0` in the container) |
 | `MANAWG_HTTP_PORT` | no | Port for `http` (default `8080`) |
 | `MANAWG_HTTP_PATH` | no | MCP endpoint path for `http` (default `/mcp`) |
 | `MANAWG_HTTP_API_KEY` | no | Bearer token, minimum 16 characters; required when HTTP binds beyond loopback |
-| `MANAWG_HTTP_CORS` | no | `1` allows any browser origin to call the endpoint (default off) |
+| `MANAWG_HTTP_CORS` | no | `1` lets browser clients call the endpoint (default off). With an API key or OAuth any origin may; keyless on loopback only `localhost`, `127.0.0.1` and `[::1]` origins |
 | `MANAWG_DRAIN_MS` | no | Milliseconds `/ready` reports `503` before shutdown (default 5000) |
 
 For stdio, only one sign-in mode has to be filled in by hand. For HTTP on a non-loopback host in
@@ -157,8 +158,10 @@ node dist/index.js
   the container `HEALTHCHECK`. `GET /ready` returns `200` while serving and `503` as soon as
   `SIGTERM`/`SIGINT` arrives, for the `MANAWG_DRAIN_MS` window, then the listener closes. Everything
   else is `404`; an MCP request without the bearer token is `401`.
-- Browser clients (MCP Inspector) need `MANAWG_HTTP_CORS=1` — it stays off so an unauthenticated
-  endpoint cannot be called from a foreign page.
+- Browser clients (MCP Inspector) need `MANAWG_HTTP_CORS=1`. It stays off by default. Keyless on
+  loopback, the server then still refuses every origin except `localhost`, `127.0.0.1` and `[::1]`,
+  so a foreign page cannot use your signed-in account; with an API key any origin may call, but
+  needs the key.
 - Startup failures are a single `config_error: …` line and exit status 1, so a bad deployment
   fails fast instead of booting broken.
 
@@ -177,7 +180,7 @@ curl http://127.0.0.1:8080/health
 
 The image serves HTTP on `0.0.0.0:8080`, runs as a non-root user, keeps the session cache in
 `/data` (`MANAWG_SESSION_CACHE` points there) and carries a `HEALTHCHECK` against `/health`. Pin a
-version tag such as `0.2.1` in production. To build it yourself: `docker build -t manawg-mcp .`
+version tag such as `0.3.0` in production. To build it yourself: `docker build -t manawg-mcp .`
 
 ## Hosted with OAuth
 

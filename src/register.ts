@@ -1,7 +1,7 @@
 import { type McpServer, ResourceTemplate } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { SHARE_CODE_PATTERN } from './config.js';
-import { describeError } from './errors.js';
+import { describeError, describeFailure } from './errors.js';
 import { isUuid } from './ids.js';
 import type { ManaWgClient, WgRequest } from './manawg-client.js';
 import { capPayload, DEFAULT_MAX_BYTES, isRecord, type PayloadLimits } from './payload.js';
@@ -49,6 +49,35 @@ export function registerResource(server: McpServer, client: ManaWgClient, def: R
   );
 }
 
+/** Resources listed per template: enough to pick from, cheap to fetch on every resources/list. */
+const ENTITY_LIST_LIMIT = 50;
+
+type EntityRef = { id: string; label: string };
+
+/**
+ * Enumerates the entities behind a template for resources/list and id completion. Failures give
+ * an empty list: an account without a unique flat, a rate limit or an outage must not break
+ * listing the other resources.
+ */
+async function listEntities(client: ManaWgClient, def: ResourceTemplateDef): Promise<EntityRef[]> {
+  try {
+    const payload = await client.call({
+      method: 'GET',
+      path: def.list.path,
+      ...(def.list.query ? { query: def.list.query } : {}),
+    });
+    const items = isRecord(payload) ? payload[def.list.key] : undefined;
+    if (!Array.isArray(items)) return [];
+    return items.flatMap((item) => {
+      if (!isRecord(item) || !isUuid(item.id)) return [];
+      const label = item[def.list.label];
+      return [{ id: item.id, label: typeof label === 'string' && label ? label : item.id }];
+    });
+  } catch {
+    return [];
+  }
+}
+
 export function registerEntityResource(
   server: McpServer,
   client: ManaWgClient,
@@ -56,7 +85,21 @@ export function registerEntityResource(
 ): void {
   server.registerResource(
     def.name,
-    new ResourceTemplate(def.uriTemplate, { list: undefined }),
+    new ResourceTemplate(def.uriTemplate, {
+      list: async () => ({
+        resources: (await listEntities(client, def)).slice(0, ENTITY_LIST_LIMIT).map((entity) => ({
+          uri: def.uriTemplate.replace('{id}', entity.id),
+          name: entity.label,
+          mimeType: JSON_MIME,
+        })),
+      }),
+      complete: {
+        id: async (value) =>
+          (await listEntities(client, def))
+            .map((entity) => entity.id)
+            .filter((id) => id.startsWith(value.toLowerCase())),
+      },
+    }),
     { title: def.title, description: def.description, mimeType: JSON_MIME },
     (uri, variables) => {
       const id = variables.id;
@@ -122,9 +165,11 @@ export function registerTool(server: McpServer, client: ManaWgClient, def: ToolD
       },
     },
     // The SDK has already validated `args` against `def.input` at this point.
-    async (input) => {
+    async (input, ctx) => {
       const { wgCode, ...args } = input as { wgCode?: string } & Record<string, unknown>;
       const request: WgRequest = {
+        // A client that cancels or disconnects stops the upstream call and its retries.
+        signal: ctx.mcpReq.signal,
         ...(wgCode ? { wgCode } : {}),
         method: def.method,
         path: def.path(args),
@@ -141,6 +186,7 @@ export function registerTool(server: McpServer, client: ManaWgClient, def: ToolD
           ...(isRecord(payload) ? { structuredContent: payload } : {}),
         };
       } catch (error) {
+        console.error(describeFailure(def.name, error));
         return {
           isError: true,
           content: [{ type: 'text' as const, text: describeError(error) }],

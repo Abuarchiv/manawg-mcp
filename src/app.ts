@@ -19,7 +19,7 @@ export function serverFactory(
   config: AppConfig,
   fetchImpl: typeof fetch = fetch,
 ): McpServerFactory {
-  const options = { allowDestructive: config.allowDestructive };
+  const options = { allowDestructive: config.allowDestructive, toolsets: config.toolsets };
   if (config.auth.mode === 'session') {
     const client = createManaWgClient(
       config,
@@ -36,7 +36,10 @@ export function serverFactory(
     const client: ManaWgClient = createManaWgClient(
       config,
       fetchImpl,
-      bearerCredentials(authInfo.token),
+      bearerCredentials(
+        authInfo.token,
+        typeof authInfo.extra?.sub === 'string' ? authInfo.extra.sub : undefined,
+      ),
     );
     return buildServer(client, options);
   };

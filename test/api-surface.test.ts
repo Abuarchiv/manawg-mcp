@@ -19,6 +19,27 @@ function toEndpoint(method: string, scope: 'wg' | 'account' | undefined, path: s
 
 const placeholder = new Proxy({}, { get: () => '<id>' });
 
+// App routes no tool or resource calls, each with the reason. A new app route must either get a
+// tool or an entry here, and an entry for a route that is now exposed or gone fails the test.
+const INTENTIONALLY_UNEXPOSED: Record<string, string> = {
+  'DELETE /api/wg/{}': 'deleting a flat is irreversible and stays in the app',
+  'DELETE /api/wg/{}/recurring-expenses/{}':
+    'duplicate of the collection route recurring_delete uses',
+  'GET /api/wg/invites/{}': 'join flow for the invited person, not for a member managing the flat',
+  'GET /api/wg/invites/{}/preview':
+    'join flow for the invited person, not for a member managing the flat',
+  'POST /api/wg/{}/members': 'joining a flat with an invite token happens in the app',
+  'POST /api/wg/{}/members/{}/admin': 'handing over the admin role stays in the app',
+  'POST /api/wg/{}/notifications': 'push subscriptions belong to a browser, plus test_notification',
+};
+
+const exposed = () =>
+  new Set([
+    ...TOOL_DEFS.map((tool) => toEndpoint(tool.method, tool.scope, tool.path(placeholder))),
+    ...RESOURCE_DEFS.map((def) => toEndpoint('GET', def.scope, def.path)),
+    ...RESOURCE_TEMPLATE_DEFS.map((def) => toEndpoint('GET', 'wg', def.path('<id>'))),
+  ]);
+
 it('maps every tool to a route the app serves', () => {
   const missing = TOOL_DEFS.map((tool) => ({
     name: tool.name,
@@ -48,4 +69,16 @@ it('keeps tool names unique and every promised error code on the allowlist', () 
       .map((code) => `${tool.name}:${code}`),
   );
   expect(unknownCodes).toEqual([]);
+});
+
+it('accounts for every app route: exposed by a tool or resource, or listed with a reason', () => {
+  const used = exposed();
+  const unaccounted = [...routes].filter(
+    (route) => !used.has(route) && !(route in INTENTIONALLY_UNEXPOSED),
+  );
+  const stale = Object.keys(INTENTIONALLY_UNEXPOSED).filter(
+    (route) => used.has(route) || !routes.has(route),
+  );
+
+  expect({ unaccounted, stale }).toEqual({ unaccounted: [], stale: [] });
 });

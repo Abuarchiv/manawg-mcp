@@ -9,10 +9,13 @@ import {
 } from './register.js';
 import { RESOURCE_DEFS, RESOURCE_TEMPLATE_DEFS } from './resources.js';
 import { selectTools, TOOL_DEFS } from './tools/registry.js';
+import { toolsetEnabled } from './toolsets.js';
 import { serverVersion } from './version.js';
 
 export type ServerOptions = {
   allowDestructive?: boolean;
+  /** MANAWG_TOOLSETS: register only these tool groups (plus `overview`); all when unset. */
+  toolsets?: readonly string[];
 };
 
 /** Sent once at initialize: what an agent needs before its first call. */
@@ -26,10 +29,35 @@ export const SERVER_INSTRUCTIONS = `ManaWG is a shared-flat household app: expen
 - Confirm with the user before anything that notifies other people (chat_send, reminder_send) or deletes data.
 - Errors read "ManaWG request failed: <code>"; the code says what went wrong, some add what to do next.`;
 
+const SERVER_ICONS = [
+  { src: 'https://manawg.com/icon-512.png', mimeType: 'image/png', sizes: ['512x512'] },
+  { src: 'https://manawg.com/icon.svg', mimeType: 'image/svg+xml', sizes: ['any'] },
+];
+
+/**
+ * Clients speaking the 2026-07-28 revision may cache these lists. They only change with a
+ * release, so an hour is safe and spares a ~127 KB `tools/list` on every connection. The
+ * per-user resource listing and `resources/read` stay uncached.
+ */
+const STATIC_LIST = { ttlMs: 3_600_000, cacheScope: 'public' } as const;
+const STATIC_LIST_CACHE = {
+  'tools/list': STATIC_LIST,
+  'prompts/list': STATIC_LIST,
+  'resources/templates/list': STATIC_LIST,
+  'server/discover': STATIC_LIST,
+};
+
 export function buildServer(client: ManaWgClient, options: ServerOptions = {}): McpServer {
   const server = new McpServer(
-    { name: 'manawg-mcp', title: 'ManaWG', version: serverVersion() },
-    { instructions: SERVER_INSTRUCTIONS },
+    {
+      name: 'manawg-mcp',
+      title: 'ManaWG',
+      version: serverVersion(),
+      description: 'Shared-flat app: expenses, cleaning rota, shopping, calendar, chat',
+      websiteUrl: 'https://manawg.com',
+      icons: SERVER_ICONS,
+    },
+    { instructions: SERVER_INSTRUCTIONS, cacheHints: STATIC_LIST_CACHE },
   );
 
   for (const def of RESOURCE_DEFS) {
@@ -39,9 +67,12 @@ export function buildServer(client: ManaWgClient, options: ServerOptions = {}): 
     registerEntityResource(server, client, def);
   }
   for (const def of PROMPT_DEFS) {
-    registerPrompt(server, def);
+    // A prompt that walks the agent through unregistered tools would only lead it astray.
+    if (def.toolsets.every((toolset) => toolsetEnabled(toolset, options.toolsets))) {
+      registerPrompt(server, def);
+    }
   }
-  for (const def of selectTools(TOOL_DEFS, options.allowDestructive ?? false)) {
+  for (const def of selectTools(TOOL_DEFS, options.allowDestructive ?? false, options.toolsets)) {
     registerTool(server, client, def);
   }
 

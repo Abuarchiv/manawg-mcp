@@ -23,7 +23,10 @@ pnpm install
 pnpm build
 ```
 
-Tests, lint and typecheck need no credentials. `pnpm live-check` talks to a real ManaWG instance and
+Tests, lint, typecheck and `pnpm smoke` need no credentials. Smoke starts the built server with
+placeholder configuration only, ignores your shell environment and env file, and checks the
+advertised tools, resources and prompts against the registries in `dist/`, once without and once
+with `MANAWG_ALLOW_DESTRUCTIVE`. Run `pnpm build` first. `pnpm live-check` talks to a real ManaWG instance and
 needs the env file described in the [self-hosting guide](docs/self-hosting.md#local-setup).
 
 ## Rules for changes
@@ -45,6 +48,17 @@ pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm smoke
 
 Describe what changed and why, and link the issue if there is one. Keep a pull request to one
 topic.
+
+## Releasing (maintainers)
+
+1. Move the `Unreleased` entries in [CHANGELOG.md](CHANGELOG.md) under a `## X.Y.Z (date)` heading
+   and set the same version in `package.json` and `server.json`.
+2. Push the tag `vX.Y.Z`. The release workflow refuses a tag that disagrees with those files or
+   has no changelog section, runs lint, typecheck, tests, build and smoke, then publishes the
+   multi-arch image to GHCR and creates the GitHub Release with the changelog section as notes.
+   A prerelease tag (`vX.Y.Z-rc.1`) does not move the `latest` image tag and is marked as a
+   prerelease.
+3. Publishing to the MCP Registry is a separate manual step.
 
 ## Licence
 

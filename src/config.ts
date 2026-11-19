@@ -1,6 +1,7 @@
 import { isIP } from 'node:net';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { TOOLSET_NAMES, type ToolsetName } from './toolsets.js';
 
 const DEFAULT_TIMEOUT_MS = 10_000;
 const TRUTHY_VALUES = new Set(['1', 'true', 'yes', 'on']);
@@ -58,6 +59,8 @@ export type AppConfig = {
   timeoutMs: number;
   auth: AuthConfig;
   allowDestructive: boolean;
+  /** MANAWG_TOOLSETS as a list; `undefined` means every toolset. */
+  toolsets?: string[];
   transport: TransportName;
   http: HttpTransportConfig;
 };
@@ -173,6 +176,33 @@ function defaultWgCode(env: NodeJS.ProcessEnv): string | undefined {
 function sessionCachePath(env: NodeJS.ProcessEnv): string {
   const configured = env.MANAWG_SESSION_CACHE?.trim();
   return configured || DEFAULT_SESSION_CACHE_PATH;
+}
+
+function toolsets(env: NodeJS.ProcessEnv): string[] | undefined {
+  const raw = env.MANAWG_TOOLSETS?.trim().toLowerCase();
+  if (!raw || raw === 'all') {
+    return undefined;
+  }
+  const names = [
+    ...new Set(
+      raw
+        .split(',')
+        .map((name) => name.trim())
+        .filter(Boolean),
+    ),
+  ];
+  if (names.length === 0) {
+    throw new Error(
+      `MANAWG_TOOLSETS names no toolset (known: ${TOOLSET_NAMES.join(', ')}, or all)`,
+    );
+  }
+  const unknown = names.filter((name) => !TOOLSET_NAMES.includes(name as ToolsetName));
+  if (unknown.length > 0) {
+    throw new Error(
+      `MANAWG_TOOLSETS has unknown toolsets: ${unknown.join(', ')} (known: ${TOOLSET_NAMES.join(', ')}, or all)`,
+    );
+  }
+  return names;
 }
 
 function allowDestructive(env: NodeJS.ProcessEnv): boolean {
@@ -291,6 +321,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     timeoutMs: DEFAULT_TIMEOUT_MS,
     auth,
     allowDestructive: allowDestructive(env),
+    toolsets: toolsets(env),
     transport: transportName,
     http,
   };

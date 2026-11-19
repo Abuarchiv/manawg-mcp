@@ -35,12 +35,17 @@ afterEach(async () => {
   }
 });
 
-function token(claims: Record<string, unknown> = {}, issuer = ISSUER, expiresIn = '1h') {
+function token(
+  claims: Record<string, unknown> = {},
+  issuer = ISSUER,
+  expiresIn = '1h',
+  subject = '00000000-0000-4000-8000-0000000000aa',
+) {
   return new SignJWT({ role: 'authenticated', client_id: 'agent-client', ...claims })
     .setProtectedHeader({ alg: 'ES256', kid: 'test-key' })
     .setIssuer(issuer)
     .setAudience('authenticated')
-    .setSubject('00000000-0000-4000-8000-0000000000aa')
+    .setSubject(subject)
     .setIssuedAt()
     .setExpirationTime(expiresIn)
     .sign(privateKey);
@@ -164,6 +169,18 @@ it('forwards a verified token to the app and resolves the only flat of the accou
     expect(entry.authorization).toBe(`Bearer ${access}`);
     expect(entry.cookie).toBeNull();
   }
+});
+
+it('looks up the only flat once per user across requests with different tokens', async () => {
+  const { running, upstream } = await startHosted();
+  const subject = '00000000-0000-4000-8000-0000000000bb';
+
+  for (const clientId of ['client-one', 'client-two']) {
+    const access = await token({ client_id: clientId }, ISSUER, '1h', subject);
+    expect((await callTool(running.url, 'shopping_list', access)).status).toBe(200);
+  }
+
+  expect(upstream.filter((entry) => entry.url.endsWith('/api/wg/mine'))).toHaveLength(1);
 });
 
 it.each([

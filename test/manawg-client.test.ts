@@ -4,7 +4,7 @@ import { afterEach, expect, it, vi } from 'vitest';
 import type { SessionController } from '../src/auth.js';
 import type { AppConfig } from '../src/config.js';
 import { ManaWgError } from '../src/errors.js';
-import { createManaWgClient, sessionCredentials } from '../src/manawg-client.js';
+import { bearerCredentials, createManaWgClient, sessionCredentials } from '../src/manawg-client.js';
 
 const _UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -392,4 +392,131 @@ it('maps a failing session sign-in to the safe auth_failed code', async () => {
 
   expect(await errorCode(client.call({ path: ['dashboard'] }))).toBe('auth_failed');
   expect(fetchMock).not.toHaveBeenCalled();
+});
+
+it.each(['not_a_member', 'member_deactivated'])(
+  'returns a 401 %s for the flat as it is and keeps the session',
+  async (code) => {
+    const auth = fakeAuth();
+    const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ code }, 401));
+    const client = createManaWgClient(validConfig, fetchMock, sessionCredentials(auth));
+
+    expect(await errorCode(client.call({ path: ['shopping'] }))).toBe(code);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(auth.invalidate).not.toHaveBeenCalled();
+  },
+);
+
+it('treats a delete that found its row gone after a lost answer as done', async () => {
+  const fetchMock = vi
+    .fn<typeof fetch>()
+    .mockRejectedValueOnce(new Error('socket hang up'))
+    .mockResolvedValueOnce(jsonResponse({ code: 'expense_not_found' }, 404));
+  const client = createManaWgClient(validConfig, fetchMock, undefined, { retryDelaysMs: [1, 1] });
+
+  await expect(client.call({ path: ['expenses', 'e1'], method: 'DELETE' })).resolves.toEqual({
+    deleted: true,
+    alreadyGone: true,
+  });
+});
+
+it('still reports a missing row when the first delete never went out', async () => {
+  const fetchMock = vi
+    .fn<typeof fetch>()
+    .mockResolvedValue(jsonResponse({ code: 'expense_not_found' }, 404));
+  const client = createManaWgClient(validConfig, fetchMock, undefined, { retryDelaysMs: [1, 1] });
+
+  expect(await errorCode(client.call({ path: ['expenses', 'e1'], method: 'DELETE' }))).toBe(
+    'expense_not_found',
+  );
+});
+
+it('does not replay a guarded update after a network failure', async () => {
+  const fetchMock = vi.fn<typeof fetch>().mockRejectedValue(new Error('socket hang up'));
+  const client = createManaWgClient(validConfig, fetchMock, undefined, { retryDelaysMs: [1, 1] });
+
+  expect(
+    await errorCode(
+      client.call({
+        path: ['chores', 'c1'],
+        method: 'PATCH',
+        body: { title: 'x', expectedUpdatedAt: '2026-01-01T00:00:00.000Z' },
+      }),
+    ),
+  ).toBe('upstream_network_error');
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+it('does not replay a guarded update after a 5xx that may have been committed', async () => {
+  const fetchMock = vi.fn<typeof fetch>().mockResolvedValue(jsonResponse({ code: 'x' }, 503));
+  const client = createManaWgClient(validConfig, fetchMock, undefined, { retryDelaysMs: [1, 1] });
+
+  await errorCode(
+    client.call({
+      path: ['chores', 'c1'],
+      method: 'PATCH',
+      body: { title: 'x', expectedUpdatedAt: '2026-01-01T00:00:00.000Z' },
+    }),
+  );
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+it('stops retrying and answers timeout once the call is aborted', async () => {
+  const controller = new AbortController();
+  const fetchMock = vi.fn<typeof fetch>().mockImplementation(
+    (_url, init) =>
+      new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal?.reason), { once: true });
+        controller.abort();
+      }),
+  );
+  const client = createManaWgClient(validConfig, fetchMock, undefined, { retryDelaysMs: [1, 1] });
+
+  expect(await errorCode(client.call({ path: ['dashboard'], signal: controller.signal }))).toBe(
+    'timeout',
+  );
+  expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+it('shares the only-flat lookup between per-request clients of one verified user', async () => {
+  const fetchMock = vi
+    .fn<typeof fetch>()
+    .mockImplementation(async (url) =>
+      String(url).endsWith('/api/wg/mine')
+        ? jsonResponse({ wgs: [{ code: 'K7Q2M9XD' }] })
+        : jsonResponse({ items: [] }),
+    );
+  const config = { ...validConfig };
+  delete config.defaultWgCode;
+  const make = (token: string, subject: string) =>
+    createManaWgClient(config, fetchMock, bearerCredentials(token, subject));
+
+  await make('token-1', 'user-shared').call({ path: ['shopping'] });
+  await make('token-2', 'user-shared').call({ path: ['shopping'] });
+  await make('token-3', 'user-other').call({ path: ['shopping'] });
+
+  const urls = fetchMock.mock.calls.map((call) => String(call[0]));
+  expect(urls.filter((url) => url.endsWith('/api/wg/mine'))).toHaveLength(2);
+});
+
+it('keeps a shared only-flat lookup alive when the caller that started it aborts', async () => {
+  const fetchMock = vi
+    .fn<typeof fetch>()
+    .mockImplementation(async (url) =>
+      String(url).endsWith('/api/wg/mine')
+        ? jsonResponse({ wgs: [{ code: 'K7Q2M9XD' }] })
+        : jsonResponse({ items: [] }),
+    );
+  const config = { ...validConfig };
+  delete config.defaultWgCode;
+  const make = () =>
+    createManaWgClient(config, fetchMock, bearerCredentials('token', 'user-abort-shared'));
+  const first = new AbortController();
+
+  const aborted = errorCode(make().call({ path: ['shopping'], signal: first.signal }));
+  const healthy = make().call({ path: ['shopping'] });
+  first.abort();
+
+  expect(await aborted).toBe('timeout');
+  await expect(healthy).resolves.toEqual({ items: [] });
 });

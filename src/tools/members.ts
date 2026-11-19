@@ -105,6 +105,53 @@ export const memberTools = [
     },
   }),
   defineTool({
+    name: 'invite_create',
+    title: 'Create an invite link',
+    description:
+      'Create a link that lets one or more people join the flat; this is the only way to add flatmates, because the share code alone does not allow joining. The link works for 14 days and for up to 10 joins, and a flat holds at most 20 active links (invite_limit_reached; free one with invite_revoke). Use it when the user wants to hand the link over themselves; to send it by email use invite_email instead, to see existing links use invites_list. Any member may call it. Not idempotent: every call creates a new link. Returns id, url and expiresAt. url is a secret that lets anyone who has it join the flat, so show it only to the user and never post it in chat, notes or logs. It cannot be read again later, because invites_list never returns it.',
+    method: 'POST',
+    input: z.strictObject({}),
+    path: () => ['invites'],
+  }),
+  defineTool({
+    name: 'invites_list',
+    title: 'List active invite links',
+    description:
+      'List the active invite links of the flat, newest first, each with id, createdAt, expiresAt, maxUses, useCount and createdByName. Links that expired, were revoked or reached their use limit are not listed. Use it to find the id for invite_revoke or to see whether a link was used; it never returns the link URL itself (only invite_create does), so a lost link has to be revoked and recreated. Read-only; any member may call it.',
+    method: 'GET',
+    input: z.strictObject({}),
+    path: () => ['invites'],
+  }),
+  defineTool({
+    name: 'invite_revoke',
+    title: 'Revoke an invite link',
+    description:
+      'Switch off one active invite link at once, so nobody can join with it any more. Use it when a link was shared too widely or sent to the wrong person; people who already joined stay members, and to remove a member use member_update. The id comes from invites_list or from invite_create. Any member may revoke any link of the flat. A revoked link cannot be restored, but invite_create makes a new one. Fails with 404 invite_not_found when the link is unknown or already revoked. Notifies nobody and writes an audit entry. Returns revoked true.',
+    method: 'DELETE',
+    gate: 'destructive',
+    input: z.strictObject({
+      id: uuid.describe('Id of the invite link, from invites_list or invite_create.'),
+    }),
+    path: (input) => ['invites', input.id],
+  }),
+  defineTool({
+    name: 'invite_email',
+    title: 'Email an invite link',
+    description:
+      'Send an invitation email with a fresh invite link (valid 14 days) to one address. Use it when the user names a person to invite; if the user wants to pass on the link themselves use invite_create, which returns it. Any member may call it. The email goes to an external person, so confirm the address with the user first. The address is not stored. Only one mail per address and flat is sent per day: a repeat returns status duplicate and sends nothing. Returns status: sent, or unconfirmed (the mail provider timed out, so it may still arrive and the link stays valid). Fails with mail_unavailable (nothing sent, try later), invite_rate_limited when a limit is reached (10 mails per hour per member, 20 per day per account, 2 per day per address), and invite_limit_reached when the flat already has 20 active links (free one with invite_revoke).',
+    method: 'POST',
+    input: z.strictObject({
+      email: z
+        .email()
+        .max(254)
+        .describe(
+          'Email address of the person to invite, given by the user. Lower-cased automatically.',
+        ),
+    }),
+    path: () => ['invitations'],
+    body: (input) => input,
+  }),
+  defineTool({
     name: 'notifications_get',
     title: 'Read notification settings',
     description:

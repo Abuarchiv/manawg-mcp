@@ -13,7 +13,7 @@ const templateId = uuid.describe(
   'Id of the fixed-cost template, as returned in recurringExpenses[].id by recurring_list or in recurringExpense.id by recurring_create.',
 );
 const templateCurrency =
-  'Only EUR is accepted by the app; any other value fails with recurring_currency_unsupported. Omit it.';
+  'Fixed-cost templates are always in EUR, which is the only accepted value (the app rejects others with recurring_currency_unsupported). Omit it.';
 const templateSplits =
   'Who owes what per charge, one entry per member. Amounts must add up to amountCents. Member ids come from members_list.';
 const expectedDueAt =
@@ -65,7 +65,7 @@ export const recurringTools = [
         .min(1)
         .max(50)
         .describe(templateSplits),
-      currency: z.enum(['EUR', 'CHF', 'USD', 'GBP']).default('EUR').describe(templateCurrency),
+      currency: z.literal('EUR').default('EUR').describe(templateCurrency),
       intervalMonths: z
         .number()
         .int()
@@ -92,7 +92,7 @@ export const recurringTools = [
           'New amount per charge in cents of EUR. If you change it, also send splits that add up to it unless the current splits already do.',
         )
         .optional(),
-      currency: z.enum(['EUR', 'CHF', 'USD', 'GBP']).describe(templateCurrency).optional(),
+      currency: z.literal('EUR').describe(templateCurrency).optional(),
       paidByMemberId: uuid.describe('New paying member, from members_list.').optional(),
       intervalMonths: z
         .number()

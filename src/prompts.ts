@@ -1,10 +1,13 @@
 import { z } from 'zod';
+import type { ToolsetName } from './toolsets.js';
 
 export type PromptDef = {
   name: string;
   title: string;
   description: string;
   args: z.ZodType;
+  /** Tool groups the prompt calls; it is only offered when all of them are registered. */
+  toolsets: readonly ToolsetName[];
   render: (args: Record<string, string | undefined>) => string;
 };
 
@@ -15,9 +18,10 @@ function prompt(
   title: string,
   description: string,
   args: z.ZodType,
+  toolsets: readonly ToolsetName[],
   render: (args: Record<string, string | undefined>) => string,
 ): PromptDef {
-  return { name, title, description, args, render };
+  return { name, title, description, args, toolsets, render };
 }
 
 export const PROMPT_DEFS: PromptDef[] = [
@@ -26,6 +30,7 @@ export const PROMPT_DEFS: PromptDef[] = [
     'Daily flat brief',
     'Reads the dashboard, activity, shopping, chores and calendar and gives a compact status.',
     z.strictObject({ focus: z.string().max(200).optional() }),
+    ['shopping', 'chores', 'calendar'],
     (args) => `Write a compact daily brief for the flat.
 
 Steps:
@@ -48,6 +53,7 @@ Invent nothing: every bullet must come from a tool answer; mark missing data bri
     'Plan a shopping run',
     'Combines the shopping list with the supplies and gives a grouped list for the run.',
     noArgs,
+    ['shopping', 'supplies'],
     () => `Plan a shopping run for the flat.
 
 Steps:
@@ -66,6 +72,7 @@ Change nothing: only plan, do not call any shopping tools.`,
     'Draft a payment reminder',
     'Writes a friendly reminder about open balances. Draft only, nothing is sent.',
     z.strictObject({ tone: z.string().max(200).optional() }),
+    ['money'],
     (args) => `Write a friendly payment reminder for the flat.
 
 Steps:
@@ -84,6 +91,7 @@ IMPORTANT: return only the draft. Do not call reminder_send before the user expl
     'Suggest a settlement',
     'Works out the fewest transfers between the members, without carrying them out.',
     noArgs,
+    ['money'],
     () => `Suggest the smallest set of payments that settles the flat.
 
 Steps:

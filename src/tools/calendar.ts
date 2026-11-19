@@ -97,7 +97,7 @@ export const calendarTools = [
     name: 'event_update',
     title: 'Edit a calendar event',
     description:
-      'Change fields of an existing event; fields you leave out stay unchanged, and description, location, recurrence and endsAt can be cleared by sending null. Use event_create for a new event and event_delete to remove one. Only the event creator or a flat admin may edit it, otherwise 403 not_owner. For a recurring event the change applies to the whole series. When the start or allDay changes and the event is still upcoming (or repeating), the other members are notified that it moved. Pass expectedUpdatedAt to guard against concurrent edits: if someone changed the event since, you get 409 event_changed, so read it again with event_get and decide. An endsAt before startsAt fails with ends_before_start. Returns the updated event.',
+      'Change fields of an existing event; fields you leave out stay unchanged, and description, location, recurrence and endsAt can be cleared by sending null. Use event_create for a new event and event_delete to remove one. Only the event creator or a flat admin may edit it, otherwise 403 not_owner. For a recurring event the change applies to the whole series; use event_occurrence_change to cancel or move a single date. When the start or allDay changes and the event is still upcoming (or repeating), the other members are notified that it moved. Pass expectedUpdatedAt to guard against concurrent edits: if someone changed the event since, you get 409 event_changed, so read it again with event_get and decide. An endsAt before startsAt fails with ends_before_start. Returns the updated event.',
     method: 'PATCH',
     input: z.strictObject({
       id: uuid.describe('Id of the event to edit, from events_list or event_get.'),
@@ -147,13 +147,75 @@ export const calendarTools = [
     name: 'event_delete',
     title: 'Delete a calendar event',
     description:
-      'Permanently delete a calendar event; there is no undo, so note the date and details first if they are still needed. For a recurring event the whole series is deleted. Use event_update instead to move or rename it. Only the event creator or a flat admin may delete it, otherwise 403 not_owner. When the event is still upcoming (or repeating), the other members are notified that it was cancelled. An unknown id fails with 404 event_not_found.',
+      'Permanently delete a calendar event; there is no undo, so note the date and details first if they are still needed. For a recurring event the whole series is deleted; use event_occurrence_change to drop only one date. Use event_update instead to move or rename it. Only the event creator or a flat admin may delete it, otherwise 403 not_owner. When the event is still upcoming (or repeating), the other members are notified that it was cancelled. An unknown id fails with 404 event_not_found.',
     method: 'DELETE',
     gate: 'destructive',
     input: z.strictObject({
       id: uuid.describe('Id of the event to delete, from events_list or event_get.'),
     }),
     path: (input) => ['events', input.id],
+  }),
+  defineTool({
+    name: 'event_occurrence_change',
+    title: 'Cancel or move one occurrence',
+    description:
+      'Change a single date of a recurring event while the rest of the series stays as it is. action "cancel" skips that date for good, with no undo route; action "detach" turns that date into its own one-off event with new details, for example a different time or title, and the series skips the original date. Use it instead of event_update or event_delete, which always affect the whole series. Only the event creator or a flat admin may do this, otherwise 403 not_owner. An event without a repeat rule fails with 400 not_recurring. events_list and event_get return the series unexpanded, so work out occurrenceStartsAt from the event startsAt and its recurrence rule; a date that the series does not produce fails with 404 occurrence_not_found, and a series that already skips too many dates with exception_limit_reached. Pass expectedUpdatedAt with detach to refuse a stale edit: 409 event_changed means read the event again with event_get. The other members are notified when the affected date is still ahead. Returns the updated series as event and, for detach, the new one-off event as created (null for cancel).',
+    method: 'POST',
+    gate: 'destructive',
+    input: z
+      .strictObject({
+        id: uuid.describe('Id of the recurring event, from events_list or event_get.'),
+        action: z
+          .enum(['cancel', 'detach'])
+          .describe(
+            '"cancel" drops this date from the series. "detach" makes this date a separate one-off event described by title, startsAt and the other detail fields.',
+          ),
+        occurrenceStartsAt: isoDateTime.describe(
+          'Start of the occurrence to change, as ISO 8601 datetime with offset, exactly as the series produces it: the event startsAt moved to that date by its recurrence rule, same time of day (Berlin time). For an all-day event send the date at T00:00:00Z.',
+        ),
+        title: eventTitle
+          .optional()
+          .describe('detach only, required: title of the new one-off event.'),
+        startsAt: isoDateTime
+          .optional()
+          .describe(
+            'detach only, required: start of the new one-off event as ISO 8601 datetime with offset, year 1900..2200. Send the same value as occurrenceStartsAt to keep the time.',
+          ),
+        endsAt: isoDateTime
+          .nullable()
+          .optional()
+          .describe(
+            'detach only: end of the new event, not before startsAt. Omit or null for none.',
+          ),
+        allDay: z
+          .boolean()
+          .optional()
+          .describe('detach only: true for an all-day event. Defaults to false.'),
+        location: eventLocation
+          .nullable()
+          .optional()
+          .describe('detach only: place of the new event. Omit or null for none.'),
+        description: eventDescription
+          .nullable()
+          .optional()
+          .describe('detach only: details of the new event. Omit or null for none.'),
+        expectedUpdatedAt: isoDateTime
+          .optional()
+          .describe(
+            'detach only: the updatedAt value you last read from event_get. The change only applies if the series is unchanged since; otherwise 409 event_changed.',
+          ),
+      })
+      .refine((input) => input.action !== 'detach' || (input.title && input.startsAt), {
+        message: 'detach needs title and startsAt',
+        path: ['title'],
+      }),
+    path: (input) => ['events', input.id, 'occurrence'],
+    body: (input) => {
+      const { id, ...body } = input;
+      return input.action === 'cancel'
+        ? { action: input.action, occurrenceStartsAt: input.occurrenceStartsAt }
+        : body;
+    },
   }),
   defineTool({
     name: 'absences_list',

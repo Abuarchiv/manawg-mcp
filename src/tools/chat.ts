@@ -9,19 +9,13 @@ export const chatTools = [
     name: 'chat_messages',
     title: 'Read the chat',
     description:
-      "Reads one page of the flat chat, newest messages by default, in chronological order. Use it to catch up or to find a message id for chat_edit, chat_react, chat_delete or chat_mark_read; it does not change the read marker (use chat_mark_read) and does not count unread messages (use chat_unread). To page back, send before and beforeId of the oldest message you have, always together (otherwise before_cursor_incomplete). The result holds messages, their reactions and mentions, and each member's read position; deleted messages show no text.",
+      "Reads one page of the flat chat, newest messages by default, in chronological order. Use it to catch up or to find a message id for chat_edit, chat_react, chat_delete or chat_mark_read; it does not change the read marker (use chat_mark_read) and does not count unread messages (use chat_unread). To page back, send beforeId of the oldest message you have; a malformed id gives before_id_invalid. The result holds messages, their reactions and mentions, and each member's read position; deleted messages show no text.",
     method: 'GET',
     input: z.strictObject({
-      before: z.iso
-        .datetime({ offset: true })
-        .optional()
-        .describe(
-          'Cursor time: createdAt (ISO 8601 with offset) of the oldest message you already have. Send together with beforeId; omit both for the newest page.',
-        ),
       beforeId: uuid
         .optional()
         .describe(
-          'Cursor id: id of the oldest message you already have, from a previous chat_messages result. Send together with before.',
+          'Cursor: id of the oldest message you already have, from a previous chat_messages result; the page then holds the messages sent before it. Omit for the newest page.',
         ),
       limit: z
         .number()
@@ -32,7 +26,7 @@ export const chatTools = [
         .describe('Maximum number of messages in the page. Omit for the default page size.'),
     }),
     path: () => ['chat', 'messages'],
-    query: (input) => ({ before: input.before, beforeId: input.beforeId, limit: input.limit }),
+    query: (input) => ({ beforeId: input.beforeId, limit: input.limit }),
   }),
   defineTool({
     name: 'chat_send',

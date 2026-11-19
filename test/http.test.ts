@@ -147,17 +147,35 @@ it('reports /ready as 200 before and 503 while draining', async () => {
   await draining;
 });
 
-it('adds CORS headers only when enabled', async () => {
-  const withCors = await startHttp({ cors: true });
+it('adds CORS headers only when enabled and answers preflights with the headers asked for', async () => {
+  const withCors = await startHttp({
+    cors: true,
+    auth: { kind: 'api-key', apiKey: 'k'.repeat(32) },
+  });
   const origin = originOf(withCors);
 
   const preflight = await fetch(`${origin}/mcp`, {
     method: 'OPTIONS',
-    headers: { origin: 'https://inspector.example', 'access-control-request-method': 'POST' },
+    headers: {
+      origin: 'https://inspector.example',
+      'access-control-request-method': 'POST',
+      'access-control-request-headers': 'authorization, mcp-method, mcp-name',
+    },
   });
   expect(preflight.status).toBe(204);
   expect(preflight.headers.get('access-control-allow-origin')).toBe('*');
-  expect(preflight.headers.get('access-control-allow-headers')).toContain('authorization');
+  expect(preflight.headers.get('access-control-allow-headers')).toBe(
+    'authorization, mcp-method, mcp-name',
+  );
+
+  const plainPreflight = await fetch(`${origin}/mcp`, {
+    method: 'OPTIONS',
+    headers: { origin: 'https://inspector.example', 'access-control-request-method': 'POST' },
+  });
+  const defaults = plainPreflight.headers.get('access-control-allow-headers') ?? '';
+  for (const name of ['authorization', 'mcp-method', 'mcp-name']) {
+    expect(defaults).toContain(name);
+  }
 
   const health = await fetch(`${origin}/health`, {
     headers: { origin: 'https://inspector.example' },
@@ -233,16 +251,37 @@ it('accepts the public Host of a reverse proxy in front of a loopback bind with 
   expect(proxied.status).toBe(200);
 });
 
-it('keeps the Host check on a loopback bind when CORS is on and lets cross-origin browsers in', async () => {
+it('keeps the Host and Origin checks on a loopback bind when CORS is on and no key is set', async () => {
   const cors = await startHttp({ cors: true });
   const foreignHost = await rawRequest(cors, { ...MCP_HEADERS, host: 'evil.example' });
   expect(foreignHost.status).toBeGreaterThanOrEqual(400);
-  const foreignOrigin = await rawRequest(cors, {
-    ...MCP_HEADERS,
-    host: `127.0.0.1:${cors.port}`,
-    origin: 'https://inspector.example',
+
+  const preflight = (origin: string) =>
+    fetch(cors.url, {
+      method: 'OPTIONS',
+      headers: { origin, 'access-control-request-method': 'POST' },
+    });
+  const foreign = await preflight('https://evil.example');
+  expect(foreign.status).toBe(403);
+  expect(foreign.headers.get('access-control-allow-origin')).toBeNull();
+
+  const local = await preflight('http://localhost:6274');
+  expect(local.status).toBe(204);
+  expect(local.headers.get('access-control-allow-origin')).toBe('http://localhost:6274');
+});
+
+it('lets any origin call an endpoint that needs an API key when CORS is on', async () => {
+  const apiKey = 'deploy-secret-0123456789';
+  const running = await startHttp({ cors: true, auth: { kind: 'api-key', apiKey } });
+  const answer = await rpc(running, INITIALIZE, {
+    headers: { origin: 'https://inspector.example', authorization: `Bearer ${apiKey}` },
   });
-  expect(foreignOrigin.status).toBe(200);
+  expect(answer.status).toBe(200);
+  const preflight = await fetch(running.url, {
+    method: 'OPTIONS',
+    headers: { origin: 'https://inspector.example' },
+  });
+  expect(preflight.headers.get('access-control-allow-origin')).toBe('*');
 });
 
 it('aborts the request signal when the client disconnects', async () => {
