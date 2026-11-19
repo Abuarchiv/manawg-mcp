@@ -50,9 +50,9 @@
   passes, the tool answers `timeout`.
 - The release workflow checks the tag against `package.json`, `server.json` and the changelog,
   sets `latest` only for final releases and creates the GitHub Release from this file.
-  `pnpm smoke` runs in CI without credentials.
-- Fixes since 0.2.1: app API contract matched, HTTP transport hardened, `capPayload` no longer
-  loops on one-item arrays, `glama.json` added.
+  `pnpm smoke` runs without credentials and checks the full tool list as well.
+- Request bodies match the app API contract again, the HTTP transport is hardened, `capPayload`
+  no longer loops on one-item arrays, and `glama.json` names the maintainer for Glama.
 
 ### Fixed
 
