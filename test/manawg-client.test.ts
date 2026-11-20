@@ -1,7 +1,10 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { expect, it, vi } from 'vitest';
-import type { SessionController } from '../src/auth.js';
+import { createSessionController, type SessionController } from '../src/auth.js';
 import type { AppConfig } from '../src/config.js';
 import { ManaWgError } from '../src/errors.js';
 import { bearerCredentials, createManaWgClient, sessionCredentials } from '../src/manawg-client.js';
@@ -472,6 +475,94 @@ it('stops retrying and answers timeout once the call is aborted', async () => {
     'timeout',
   );
   expect(fetchMock).toHaveBeenCalledTimes(1);
+});
+
+/**
+ * Fake timers do not reach `AbortSignal.timeout`, so this routes it through the faked
+ * `setTimeout` to let a test step past the 45 s call deadline.
+ */
+function useFakeDeadlines(): void {
+  vi.useFakeTimers();
+  vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms) => {
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(new DOMException('timed out', 'TimeoutError')), ms);
+    return controller.signal;
+  });
+  later(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+}
+
+/** Settles `promise` into a readable state, so a test can check it without awaiting it. */
+function track(promise: Promise<unknown>) {
+  const state: { settled: boolean; code?: string } = { settled: false };
+  errorCode(promise).then(
+    (code) => Object.assign(state, { settled: true, code }),
+    () => Object.assign(state, { settled: true, code: 'unexpected' }),
+  );
+  return state;
+}
+
+it('answers timeout at once when a call is aborted while sign-in still hangs', async () => {
+  useFakeDeadlines();
+  const fetchMock = answering({ items: [] });
+  const auth = fakeAuth({ cookieHeader: () => new Promise<string>(() => undefined) });
+  const client = createManaWgClient(validConfig, fetchMock, sessionCredentials(auth));
+  const controller = new AbortController();
+
+  const call = track(client.call({ path: ['shopping'], signal: controller.signal }));
+  await vi.advanceTimersByTimeAsync(0);
+  controller.abort();
+  await vi.advanceTimersByTimeAsync(0);
+
+  expect(call).toEqual({ settled: true, code: 'timeout' });
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
+it('fails a call at the 45 s deadline while its token requests are still running', async () => {
+  useFakeDeadlines();
+  const dir = mkdtempSync(join(tmpdir(), 'manawg-mcp-deadline-'));
+  later(() => rmSync(dir, { recursive: true, force: true }));
+  const sessionCachePath = join(dir, 'session.json');
+  // An expired session: refresh it, then the configured refresh token, then the password.
+  writeFileSync(
+    sessionCachePath,
+    JSON.stringify({ access_token: 'old', refresh_token: 'old-refresh', expires_at: 1 }),
+  );
+  const fetchMock = vi.fn<typeof fetch>().mockImplementation((url) => {
+    if (!String(url).includes('/auth/v1/token')) {
+      return Promise.resolve(jsonResponse({ items: [] }));
+    }
+    // Each token request stays inside its own 20 s timeout and is refused at 19 s.
+    return new Promise((resolve) => {
+      setTimeout(() => resolve(jsonResponse({ error: 'invalid_grant' }, 400)), 19_000);
+    });
+  });
+  const session = createSessionController(
+    {
+      mode: 'session',
+      url: 'https://project.supabase.co',
+      publishableKey: 'sb_publishable_key_abc',
+      bootstrapRefreshToken: 'bootstrap-refresh',
+      email: 'member@example.test',
+      password: 'correct horse battery',
+      sessionCachePath,
+    },
+    fetchMock,
+    20_000,
+  );
+  const client = createManaWgClient(validConfig, fetchMock, sessionCredentials(session));
+
+  const call = track(client.call({ path: ['shopping'] }));
+  await vi.advanceTimersByTimeAsync(44_999);
+  expect(call.settled).toBe(false);
+  await vi.advanceTimersByTimeAsync(1);
+
+  expect(call).toEqual({ settled: true, code: 'timeout' });
+  // The sign-in left behind finishes on its own without an unhandled rejection.
+  await vi.advanceTimersByTimeAsync(20_000);
+  expect(fetchMock.mock.calls.filter(([url]) => String(url).includes('/api/wg/'))).toEqual([]);
 });
 
 it('shares the only-flat lookup between per-request clients of one verified user', async () => {

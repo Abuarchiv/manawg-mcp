@@ -304,8 +304,13 @@ export function createManaWgClient(
     const headers = new Headers({ accept: 'application/json, text/csv', origin: config.origin });
     if (credentials) {
       try {
-        await credentials.apply(headers);
+        // Sign-in can take several token requests: it counts against the deadline and stops
+        // waiting on cancellation. A sign-in left behind still settles and fills the cache.
+        await untilAborted(credentials.apply(headers), deadline);
       } catch (error) {
+        if (error instanceof ManaWgError) {
+          throw error;
+        }
         throw new ManaWgError('auth_failed', 401, { cause: error });
       }
     }
