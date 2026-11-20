@@ -419,6 +419,43 @@ it('treats a delete that found its row gone after a lost answer as done', async 
   });
 });
 
+it('treats a delete that found its row gone after a 5xx as done', async () => {
+  const fetchMock = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(jsonResponse({ code: 'internal_error' }, 502))
+    .mockResolvedValueOnce(jsonResponse({ code: 'expense_not_found' }, 404));
+  const client = createManaWgClient(validConfig, fetchMock, undefined, { retryDelaysMs: [1, 1] });
+
+  await expect(client.call({ path: ['expenses', 'e1'], method: 'DELETE' })).resolves.toEqual({
+    deleted: true,
+    alreadyGone: true,
+  });
+});
+
+it('reports a missing flat on a retried delete instead of claiming success', async () => {
+  const fetchMock = vi
+    .fn<typeof fetch>()
+    .mockRejectedValueOnce(new Error('socket hang up'))
+    .mockResolvedValueOnce(jsonResponse({ code: 'wg_not_found' }, 404));
+  const client = createManaWgClient(validConfig, fetchMock, undefined, { retryDelaysMs: [1, 1] });
+
+  expect(await errorCode(client.call({ path: ['expenses', 'e1'], method: 'DELETE' }))).toBe(
+    'wg_not_found',
+  );
+});
+
+it('reports a missing row after a 429, since the rate-limited delete never ran', async () => {
+  const fetchMock = vi
+    .fn<typeof fetch>()
+    .mockResolvedValueOnce(jsonResponse({ code: 'too_many_requests' }, 429))
+    .mockResolvedValueOnce(jsonResponse({ code: 'expense_not_found' }, 404));
+  const client = createManaWgClient(validConfig, fetchMock, undefined, { retryDelaysMs: [1, 1] });
+
+  expect(await errorCode(client.call({ path: ['expenses', 'e1'], method: 'DELETE' }))).toBe(
+    'expense_not_found',
+  );
+});
+
 it('still reports a missing row when the first delete never went out', async () => {
   const fetchMock = vi
     .fn<typeof fetch>()
