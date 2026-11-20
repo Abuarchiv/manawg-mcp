@@ -163,6 +163,10 @@ function sessionAfterSetCookies(
 
 const authFailed = (cause: unknown): Error => new Error('auth_failed', { cause });
 
+/** How long a refused refresh waits for the sibling that won the race to write its session. */
+const ROTATION_WAIT_MS = 1_000;
+const ROTATION_POLL_MS = 250;
+
 export function createSessionController(
   authConfig: SupabaseAuthConfig,
   fetchImpl: typeof fetch = fetch,
@@ -173,6 +177,8 @@ export function createSessionController(
   let pending: Promise<SupabaseSession> | undefined;
   /** The configured refresh token is single-use: once tried, replaying it only trips reuse detection. */
   let bootstrapTried = false;
+  /** The last refresh token Supabase refused (or the app signed out): a cache holding it is dead. */
+  let refusedToken: string | undefined;
 
   function readCache(): SupabaseSession | undefined {
     try {
@@ -184,13 +190,9 @@ export function createSessionController(
     }
   }
 
-  function persist(next: SupabaseSession | undefined): void {
+  function persist(next: SupabaseSession): void {
     try {
       mkdirSync(dirname(authConfig.sessionCachePath), { recursive: true, mode: 0o700 });
-      if (next === undefined) {
-        rmSync(authConfig.sessionCachePath, { force: true });
-        return;
-      }
       // Write beside the cache and rename over it: concurrent readers never see a partial file
       // and the result is owner-only even when an older, wider file was there before.
       const temp = `${authConfig.sessionCachePath}.${process.pid}.tmp`;
@@ -289,6 +291,25 @@ export function createSessionController(
     return true;
   }
 
+  /** `adoptRotated`, polling a moment: the race winner writes its session only after its answer. */
+  async function awaitRotated(): Promise<boolean> {
+    for (let waited = 0; ; waited += ROTATION_POLL_MS) {
+      if (adoptRotated()) {
+        return true;
+      }
+      if (waited >= ROTATION_WAIT_MS) {
+        return false;
+      }
+      await new Promise((resolve) => setTimeout(resolve, ROTATION_POLL_MS));
+    }
+  }
+
+  /** The shared cache, unless it holds a refresh token that was already refused. */
+  function usableCache(): SupabaseSession | undefined {
+    const cached = readCache();
+    return cached && cached.refresh_token !== refusedToken ? cached : undefined;
+  }
+
   async function ensureSession(): Promise<SupabaseSession> {
     if (pending) {
       return pending;
@@ -298,7 +319,10 @@ export function createSessionController(
     }
 
     pending = (async () => {
-      if (session && adoptRotated() && isFresh(session)) {
+      // Without a session of its own, a sibling may already have signed in: take that up
+      // before spending the single-use bootstrap token.
+      session ??= usableCache();
+      if (session && (isFresh(session) || (adoptRotated() && isFresh(session)))) {
         return session;
       }
       for (let attempt = 0; session && attempt < 2; attempt++) {
@@ -311,16 +335,18 @@ export function createSessionController(
           return refreshed;
         }
         // Rejected: a sibling may have won the race and rotated the token just now.
-        if (!adoptRotated()) {
+        if (!(await awaitRotated())) {
           break;
         }
         if (isFresh(session)) {
           return session;
         }
       }
+      // The cache stays: a sibling's newer session may still land there, and deleting it
+      // could remove that one instead of ours.
       if (session) {
+        refusedToken = session.refresh_token;
         session = undefined;
-        persist(undefined);
       }
       const fresh = await bootstrapSession();
       if (!fresh) {
@@ -354,6 +380,15 @@ export function createSessionController(
         return;
       }
       const next = sessionAfterSetCookies(key, cookies, session);
+      if (next === undefined) {
+        // The app signed this session out. The shared cache may hold a sibling's newer one:
+        // leave it for the next call instead of deleting it.
+        if (session) {
+          refusedToken = session.refresh_token;
+        }
+        session = undefined;
+        return;
+      }
       if (JSON.stringify(next) !== JSON.stringify(session)) {
         session = next;
         persist(session);

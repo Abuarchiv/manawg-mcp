@@ -358,6 +358,117 @@ it('adopts the session a sibling process rotated instead of deleting it', async 
   expect(fetchMock).toHaveBeenCalledTimes(1);
 });
 
+it('keeps the winner of a refresh race when its session lands after the rejection', async () => {
+  vi.useFakeTimers();
+  try {
+    const path = cachePath();
+    writeFileSync(
+      path,
+      JSON.stringify({ ...freshSession(-120), refresh_token: 'refresh-token-1' }),
+      {
+        mode: 0o600,
+      },
+    );
+    const winner = {
+      ...freshSession(),
+      access_token: 'at-winner',
+      refresh_token: 'refresh-token-2',
+    };
+    // Supabase has already rotated the token for the sibling, which writes the cache 300 ms later.
+    fetchMock.mockImplementation(async () => {
+      setTimeout(() => writeFileSync(path, JSON.stringify(winner), { mode: 0o600 }), 300);
+      return new Response('{}', { status: 400 });
+    });
+    const controller = createSessionController(
+      authConfig({
+        sessionCachePath: path,
+        email: undefined,
+        password: undefined,
+        bootstrapRefreshToken: 'bootstrap-token',
+      }),
+      fetchMock,
+    );
+
+    const header = controller.cookieHeader();
+    await vi.advanceTimersByTimeAsync(5_000);
+
+    expect(decodeCookieHeader(await header)).toContain('at-winner');
+    expect(JSON.parse(readFileSync(path, 'utf8')).refresh_token).toBe('refresh-token-2');
+    const bodies = fetchMock.mock.calls.map((call) => JSON.parse(String(call[1]?.body)));
+    expect(bodies.map((body) => body.refresh_token)).toEqual(['refresh-token-1']);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+
+it('reads the shared cache before signing in when it has no session of its own', async () => {
+  const path = cachePath();
+  const controller = createSessionController(
+    authConfig({
+      sessionCachePath: path,
+      email: undefined,
+      password: undefined,
+      bootstrapRefreshToken: 'bootstrap-token',
+    }),
+    fetchMock,
+  );
+  const sibling = {
+    ...freshSession(),
+    access_token: 'at-sibling',
+    refresh_token: 'refresh-token-2',
+  };
+  writeFileSync(path, JSON.stringify(sibling), { mode: 0o600 });
+
+  const header = await controller.cookieHeader();
+
+  expect(decodeCookieHeader(header)).toContain('at-sibling');
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
+it('leaves the shared cache alone when the app clears the session cookie', async () => {
+  const path = cachePath();
+  writeFileSync(path, JSON.stringify(freshSession()), { mode: 0o600 });
+  const controller = createSessionController(authConfig({ sessionCachePath: path }), fetchMock);
+  await controller.cookieHeader();
+  const sibling = {
+    ...freshSession(7200),
+    access_token: 'at-sibling',
+    refresh_token: 'refresh-token-2',
+  };
+  writeFileSync(path, JSON.stringify(sibling), { mode: 0o600 });
+  const before = readFileSync(path, 'utf8');
+
+  await controller.ingest(
+    new Response('{}', { headers: { 'set-cookie': `${KEY}=; Path=/; Max-Age=0` } }),
+  );
+
+  expect(readFileSync(path, 'utf8')).toBe(before);
+  expect(decodeCookieHeader(await controller.cookieHeader())).toContain('at-sibling');
+  expect(fetchMock).not.toHaveBeenCalled();
+});
+
+it('does not take up a cached session whose refresh token was already refused', async () => {
+  const path = cachePath();
+  writeFileSync(path, JSON.stringify({ ...freshSession(-120), refresh_token: 'refresh-dead' }), {
+    mode: 0o600,
+  });
+  fetchMock
+    .mockResolvedValueOnce(new Response('{}', { status: 400 }))
+    .mockResolvedValue(grantResponse({ ...freshSession(), access_token: 'at-password' }));
+  const controller = createSessionController(authConfig({ sessionCachePath: path }), fetchMock);
+
+  vi.useFakeTimers();
+  try {
+    const header = controller.cookieHeader();
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(decodeCookieHeader(await header)).toContain('at-password');
+  } finally {
+    vi.useRealTimers();
+  }
+  const grants = fetchMock.mock.calls.map((call) => JSON.parse(String(call[1]?.body)).grant_type);
+  expect(grants).toEqual(['refresh_token', 'password']);
+});
+
 it('replaces a wider cache file atomically with an owner-only one', async () => {
   const path = cachePath();
   writeFileSync(path, '{}', { mode: 0o644 });
