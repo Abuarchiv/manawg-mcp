@@ -64,3 +64,11 @@ it('docs name every MANAWG_TOOLSETS group', () => {
   expect(documented.slice(0, TOOLSET_NAMES.length)).toEqual(TOOLSET_NAMES);
   expect(table.split('\n\n')[0].match(/^\| `/gm)).toHaveLength(TOOLSET_NAMES.length);
 });
+
+it('lists every MANAWG_TOOLSETS group in the self-hosting reference', () => {
+  const hosting = readFileSync(new URL('../docs/self-hosting.md', import.meta.url), 'utf8');
+  const row = hosting.split('\n').find((line) => line.startsWith('| `MANAWG_TOOLSETS` |')) ?? '';
+  const groups = row.slice(row.indexOf('Groups:'));
+
+  expect([...groups.matchAll(/`(\w+)`/g)].map((match) => match[1])).toEqual(TOOLSET_NAMES);
+});

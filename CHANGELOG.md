@@ -14,8 +14,8 @@
   - `event_occurrence_change` cancels (`cancel`) or detaches into a one-off event (`detach`) one
     date of a recurring event. Destructive tool, gated by `MANAWG_ALLOW_DESTRUCTIVE`.
   - `invite_create`, `invites_list`, `invite_revoke` and `invite_email` manage invite links, the
-    only way to add flatmates (`invite_revoke` and
-    `invite_email`, which mails a join link to any address, are destructive).
+    only way to add flatmates. `invite_revoke` and `invite_email`, which mails a join link to any
+    address, are destructive.
   - `calendar_subscription_create` and, as destructive tools, `calendar_subscription_rotate` and
     `calendar_subscription_revoke` complete the calendar feed lifecycle next to
     `calendar_subscription_get`. The feed URL is a secret; the descriptions tell the agent to
@@ -28,7 +28,8 @@
   pickers in clients such as VS Code can fill them. Listing fails soft.
 - `MANAWG_TOOLSETS` registers only the named tool groups (plus `overview`), so a client that
   struggles with long tool lists can get a short one. Unset keeps every tool.
-- Server metadata (`description`, `websiteUrl`, icons) in `initialize` and in `server.json`.
+- Server metadata (`description`, `websiteUrl`, icons) in `initialize` and in `server.json`. The
+  server instructions name only the tools that are registered.
 - `glama.json` names the maintainer for the Glama directory.
 - Clients on the 2026-07-28 protocol revision may cache `tools/list`, `prompts/list`,
   `resources/templates/list` and `server/discover` for an hour.
@@ -39,7 +40,9 @@
   who may call it, what it changes or notifies and which error codes it returns.
 - Every tool input field carries a schema description: where the value comes from, its unit and
   what the default means.
-- `note_react` is marked `idempotentHint`, since it sets the reaction to a given state.
+- `idempotentHint` is set on the tools that put a given state, so repeating them changes nothing
+  more: `note_react`, `chat_react`, `chat_unreact`, `chat_mark_read`, `member_update`,
+  `notifications_update` and `wg_update`.
 - `chore_update` takes `title` and `expectedUpdatedAt` (the stale-save guard) and says so; the
   description no longer claims the title cannot change.
 - `activity_get` gains an optional `limit` (80 to 320, default 80). `chat_messages` pages back
@@ -48,8 +51,8 @@
   anything else with `recurring_currency_unsupported`, so the schema now refuses it locally.
 - `import_preview` and `import_commit` describe all five sources, including `tricount_csv` and
   `settleup_csv`.
-- Every call has one 45 second deadline across attempts, retries and the flat lookup. When it
-  passes, the tool answers `timeout`.
+- Every call has one 45 second deadline across sign-in, attempts, retries and the flat lookup.
+  When it passes, or the client cancels, the tool answers `timeout` at once.
 - The release workflow checks the tag against `package.json`, `server.json` and the changelog,
   sets `latest` only for final releases and creates the GitHub Release from this file.
   `pnpm smoke` runs without credentials and checks the full tool list as well.
@@ -69,7 +72,9 @@
   wipes the session; only `auth_required` triggers a refresh. A refresh uses the session's own
   refresh token, and the bootstrap token is tried at most once per process.
 - Two processes sharing the session cache no longer log each other out: when a refresh is
-  rejected, a newer session written by the other process is adopted instead of deleted. The cache
+  rejected, the process waits up to a second for the other one's newer session and adopts it.
+  The cache is never deleted, also not when the app clears the session cookie, and a process
+  without a session reads it before it signs in. The cache
   file is written to a temporary file with mode `0600` and renamed over the old one.
 - A retried `DELETE` that finds the row already gone returns `{ deleted: true, alreadyGone: true }`
   instead of a misleading `404`. A `PATCH` with an `expected*` guard is no longer replayed after
