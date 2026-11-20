@@ -249,3 +249,30 @@ it('offers only the prompts whose tools are registered', async () => {
   await client.close();
   await server.close();
 });
+
+it.each([
+  { allowDestructive: false },
+  { allowDestructive: true },
+  { allowDestructive: true, toolsets: ['shopping'] as const },
+  { allowDestructive: false, toolsets: ['money'] as const },
+])('names only registered tools in the server instructions (%j)', async (options) => {
+  const unusedClient: ManaWgClient = {
+    call: () => Promise.reject(new Error('initialize never calls the app')),
+  };
+  const server = buildServer(unusedClient, options);
+  const client = new Client({ name: 'instructions', version: '0.0.0' });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  await Promise.all([client.connect(clientTransport), server.connect(serverTransport)]);
+
+  const listed = new Set((await client.listTools()).tools.map((tool) => tool.name));
+  const instructions = client.getInstructions() ?? '';
+  const named = TOOL_DEFS.map((tool) => tool.name).filter((name) =>
+    new RegExp(`\\b${name}\\b`).test(instructions),
+  );
+
+  expect(instructions).toContain('wg_overview');
+  expect(named.filter((name) => !listed.has(name))).toEqual([]);
+
+  await client.close();
+  await server.close();
+});

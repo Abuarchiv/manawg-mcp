@@ -18,16 +18,33 @@ type ServerOptions = {
   toolsets?: readonly ToolsetName[];
 };
 
-/** Sent once at initialize: what an agent needs before its first call. */
-const SERVER_INSTRUCTIONS = `ManaWG is a shared-flat household app: expenses and balances, cleaning rota, shopping list, pantry, notes, chat and calendar. You act as the signed-in member.
-
-- Start with wg_overview: it names the flat, its members and you (currentMember). Use member ids from there; never guess them.
-- If the account belongs to several flats, call wg_list and pass the code as wgCode to every call. With one flat, leave wgCode out.
-- Money is in integer cents (amountCents). Expense splits must add up to amountCents exactly.
-- Writes that take expected* fields guard against concurrent edits: read first, pass the values unchanged, and on a *_changed error read again and ask before retrying.
-- ManaWG never moves money. settlement_commit and cash_payment_record only record what already happened; preview with settlement_preview first.
-- Confirm with the user before anything that notifies other people (chat_send, reminder_send) or deletes data.
-- Errors read "ManaWG request failed: <code>"; the code says what went wrong, some add what to do next.`;
+/**
+ * Sent once at initialize: what an agent needs before its first call. Names only the tools
+ * `registered` holds, so MANAWG_TOOLSETS and the destructive gate never point at a missing one.
+ */
+function serverInstructions(registered: ReadonlySet<string>): string {
+  const has = (name: string) => registered.has(name);
+  const notifiers = ['chat_send', 'reminder_send', 'invite_email'].filter(has);
+  const recorders = ['settlement_commit', 'cash_payment_record'].filter(has);
+  const lines = [
+    '- Start with wg_overview: it names the flat, its members and you (currentMember). Use member ids from there; never guess them.',
+    '- If the account belongs to several flats, call wg_list and pass the code as wgCode to every call. With one flat, leave wgCode out.',
+    '- Money is in integer cents (amountCents). Expense splits must add up to amountCents exactly.',
+    '- Writes that take expected* fields guard against concurrent edits: read first, pass the values unchanged, and on a *_changed error read again and ask before retrying.',
+  ];
+  if (recorders.length > 0) {
+    const preview = has('settlement_commit') ? '; preview with settlement_preview first' : '';
+    lines.push(
+      `- ManaWG never moves money. ${recorders.join(' and ')} only record what already happened${preview}.`,
+    );
+  }
+  const examples = notifiers.length > 0 ? ` (${notifiers.join(', ')})` : '';
+  lines.push(
+    `- Confirm with the user before anything that notifies other people${examples} or deletes data.`,
+    '- Errors read "ManaWG request failed: <code>"; the code says what went wrong, some add what to do next.',
+  );
+  return `ManaWG is a shared-flat household app: expenses and balances, cleaning rota, shopping list, pantry, notes, chat and calendar. You act as the signed-in member.\n\n${lines.join('\n')}`;
+}
 
 export const SERVER_DESCRIPTION =
   'Shared-flat app ManaWG: expenses, cleaning rota, shopping list, calendar and chat for agents.';
@@ -50,6 +67,7 @@ const STATIC_LIST_CACHE = {
 };
 
 export function buildServer(client: ManaWgClient, options: ServerOptions = {}): McpServer {
+  const tools = selectTools(TOOL_DEFS, options.allowDestructive ?? false, options.toolsets);
   const server = new McpServer(
     {
       name: 'manawg-mcp',
@@ -59,7 +77,10 @@ export function buildServer(client: ManaWgClient, options: ServerOptions = {}): 
       websiteUrl: 'https://manawg.com',
       icons: SERVER_ICONS,
     },
-    { instructions: SERVER_INSTRUCTIONS, cacheHints: STATIC_LIST_CACHE },
+    {
+      instructions: serverInstructions(new Set(tools.map((tool) => tool.name))),
+      cacheHints: STATIC_LIST_CACHE,
+    },
   );
 
   for (const def of RESOURCE_DEFS) {
@@ -74,7 +95,7 @@ export function buildServer(client: ManaWgClient, options: ServerOptions = {}): 
       registerPrompt(server, def);
     }
   }
-  for (const def of selectTools(TOOL_DEFS, options.allowDestructive ?? false, options.toolsets)) {
+  for (const def of tools) {
     registerTool(server, client, def);
   }
 
