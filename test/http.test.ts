@@ -1,4 +1,5 @@
 import { request as httpRequest } from 'node:http';
+import { Client, StreamableHTTPClientTransport } from '@modelcontextprotocol/client';
 import { McpServer } from '@modelcontextprotocol/server';
 import { expect, it, vi } from 'vitest';
 import { z } from 'zod';
@@ -9,7 +10,7 @@ import {
   startHttpServer,
 } from '../src/http.js';
 import type { ManaWgClient } from '../src/manawg-client.js';
-import { buildServer } from '../src/server.js';
+import { buildServer, SERVER_DESCRIPTION, SERVER_ICONS } from '../src/server.js';
 import { selectTools, TOOL_DEFS } from '../src/tools/registry.js';
 import { useCleanup } from './helpers/app.js';
 
@@ -120,6 +121,45 @@ it('serves initialize and tools/list over http', async () => {
   expect(tools.status).toBe(200);
   const list = tools.payload as { result?: { tools?: Array<{ name: string }> } };
   expect(list.result?.tools).toHaveLength(selectTools(TOOL_DEFS, false).length);
+});
+
+it('names the server, its website and description at initialize', async () => {
+  const running = await startHttp();
+
+  const init = await rpc(running, INITIALIZE);
+
+  expect(init.payload).toMatchObject({
+    result: {
+      serverInfo: {
+        name: 'manawg-mcp',
+        title: 'ManaWG',
+        websiteUrl: 'https://manawg.com',
+        description: SERVER_DESCRIPTION,
+        icons: SERVER_ICONS,
+      },
+    },
+  });
+});
+
+it('lets 2026-07-28 clients cache the static lists for an hour, but not flat data', async () => {
+  const running = await startHttp();
+  const client = new Client(
+    { name: 'manawg-mcp-cache-test', version: '0.0.0' },
+    { versionNegotiation: { mode: { pin: '2026-07-28' } } },
+  );
+  await client.connect(new StreamableHTTPClientTransport(new URL(running.url)));
+  later(() => client.close());
+  const hint = ({ ttlMs, cacheScope }: Record<string, unknown>) => ({
+    ttlMs,
+    cacheScope,
+  });
+
+  const hour = { ttlMs: 3_600_000, cacheScope: 'public' };
+  expect(hint(await client.listTools())).toEqual(hour);
+  expect(hint(await client.listPrompts())).toEqual(hour);
+  expect(hint(await client.listResourceTemplates())).toEqual(hour);
+  // Resource lists carry the member's own entities.
+  expect(hint(await client.listResources())).toEqual({ ttlMs: 0, cacheScope: 'private' });
 });
 
 it('guards the mcp endpoint with a bearer api key and leaves health open', async () => {
