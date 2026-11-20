@@ -144,7 +144,7 @@ silent: the result carries `"_mcp": { "truncated": true, "fields": […] }`.
 | `invite_create` | Create an invite link | write |
 | `invites_list` | List active invite links | read |
 | `invite_revoke` | Revoke an invite link | destructive † |
-| `invite_email` | Email an invite link | write |
+| `invite_email` | Email an invite link | destructive † |
 | `notifications_get` | Read notification settings | read |
 | `notifications_update` | Change notification settings | write |
 | `wg_update` | Change flat settings (admin) | destructive † |
@@ -163,10 +163,11 @@ silent: the result carries `"_mcp": { "truncated": true, "fields": […] }`.
 | `import_undo` | Undo an import | destructive † |
 | `wg_create` | Create a new flat | write |
 
-† Destructive: registered only when `MANAWG_ALLOW_DESTRUCTIVE=1` (21 tools). The hosted server
-at `mcp.manawg.com` leaves them off, so it exposes 66 tools. Besides deletions this covers actions
+† Destructive: registered only when `MANAWG_ALLOW_DESTRUCTIVE=1` (22 tools). The hosted server
+at `mcp.manawg.com` leaves them off, so it exposes 65 tools. Besides deletions this covers actions
 that cannot be taken back or change who can reach the flat: `import_commit` and `import_undo`,
-`invite_revoke`, `calendar_subscription_rotate` and `calendar_subscription_revoke`, and
+`invite_revoke`, `invite_email` (it mails a join link to an outside address),
+`calendar_subscription_rotate` and `calendar_subscription_revoke`, and
 `event_occurrence_change` (cancelling a date has no undo). `import_preview` is a POST without side
 effects and counts as read.
 

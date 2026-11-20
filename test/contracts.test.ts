@@ -126,6 +126,17 @@ it('lists destructive tools only when allowed', async () => {
   expect(hidden.every((tool) => tool.annotations?.destructiveHint)).toBe(true);
 });
 
+// It mails a join link to any address: one injected instruction must not reach an outsider.
+it('registers invite_email only with MANAWG_ALLOW_DESTRUCTIVE', async () => {
+  const names = async (allowDestructive: boolean) => {
+    const { client } = await connect({ allowDestructive });
+    return (await client.listTools()).tools.map((tool) => tool.name);
+  };
+
+  expect(await names(false)).not.toContain('invite_email');
+  expect(await names(true)).toContain('invite_email');
+});
+
 it('sends the export sections as one comma-separated query value', async () => {
   const { client, fake } = await connect();
 

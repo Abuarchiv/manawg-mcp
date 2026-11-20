@@ -140,6 +140,7 @@ export const memberTools = [
     description:
       'Send an invitation email with a fresh invite link (valid 14 days) to one address. Use it when the user names a person to invite; if the user wants to pass on the link themselves use invite_create, which returns it. Any member may call it. The email goes to an external person, so confirm the address with the user first. The address is not stored. Only one mail per address and flat is sent per day: a repeat returns status duplicate and sends nothing. Returns status: sent, or unconfirmed (the mail provider timed out, so it may still arrive and the link stays valid). Fails with mail_unavailable (nothing sent, try later), invite_rate_limited when a limit is reached (10 mails per hour per member, 20 per day per account, 2 per day per address), and invite_limit_reached when the flat already has 20 active links (free one with invite_revoke).',
     method: 'POST',
+    gate: 'destructive',
     input: z.strictObject({
       email: z
         .email()

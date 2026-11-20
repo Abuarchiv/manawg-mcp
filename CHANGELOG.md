@@ -14,7 +14,8 @@
   - `event_occurrence_change` cancels (`cancel`) or detaches into a one-off event (`detach`) one
     date of a recurring event. Destructive tool, gated by `MANAWG_ALLOW_DESTRUCTIVE`.
   - `invite_create`, `invites_list`, `invite_revoke` and `invite_email` manage invite links, the
-    only way to add flatmates (`invite_revoke` is destructive).
+    only way to add flatmates (`invite_revoke` and
+    `invite_email`, which mails a join link to any address, are destructive).
   - `calendar_subscription_create` and, as destructive tools, `calendar_subscription_rotate` and
     `calendar_subscription_revoke` complete the calendar feed lifecycle next to
     `calendar_subscription_get`. The feed URL is a secret; the descriptions tell the agent to

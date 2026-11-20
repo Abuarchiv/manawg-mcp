@@ -60,9 +60,9 @@ The assistant acts as your account, in all your flats, with the same rights you 
   does.
 - **It cannot** delete a flat, change your account or sign-in, or move money. ManaWG never moves
   money; settling up only records what you paid each other.
-- **The hosted server leaves out all 21 destructive tools**: deleting expenses, posts or items,
-  changing flat or member settings, sending reminders, committing or undoing imports, revoking
-  invites and rotating or revoking the calendar feed. Read tools carry
+- **The hosted server leaves out all 22 destructive tools**: deleting expenses, posts or items,
+  changing flat or member settings, sending reminders, committing or undoing imports, emailing or
+  revoking invites and rotating or revoking the calendar feed. Read tools carry
   `readOnlyHint`, so clients can ask before every other call.
 - **You stay in control.** Every assistant you connected is listed in the app under
   Settings → Access, and you can disconnect each one there.

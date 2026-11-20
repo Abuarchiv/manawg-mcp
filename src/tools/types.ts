@@ -14,7 +14,7 @@ type ToolSpec<TInput extends z.ZodType> = {
   body?: (input: z.output<TInput>) => unknown;
   /**
    * `destructive` tools are only registered when `MANAWG_ALLOW_DESTRUCTIVE` is set. Besides
-   * deletions it covers tools that notify people (`reminder_send`).
+   * deletions it covers tools that notify people (`reminder_send`, `invite_email`).
    */
   gate?: ToolGate;
   scope?: RequestScope;
