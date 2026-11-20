@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isRecord } from '../payload.js';
 import {
   amountCents,
   currency,
@@ -6,12 +7,14 @@ import {
   expenseCategory,
   imageUrl,
   isoDateTime,
-  splitSchema,
+  splitList,
   uuid,
+  withoutId,
 } from './shared.js';
 import { defineTool } from './types.js';
 
-/** The `settlement_preview` payload; extra keys (remainingCents, expenseId, reason) are tolerated. */
+// Loose because the app returns more keys (remainingCents, expenseId, reason) than it checks;
+// settlement_commit sends back only the checked ones.
 const settlementPreview = z
   .looseObject({
     netCents: z
@@ -35,7 +38,6 @@ const settlementPreview = z
             .int()
             .min(0)
             .describe('Amount of this split in cents, as listed in the preview.'),
-          /** Set on a split that cancels a counter-debt; it reduces the settleable total. */
           offset: z
             .boolean()
             .optional()
@@ -49,22 +51,6 @@ const settlementPreview = z
   })
   .describe(
     'The settlement_preview result for the same members and currency, passed back unchanged. It proves what the caller reviewed; extra keys such as remainingCents are ignored.',
-  );
-
-/** One debtor share of an expense. */
-const splitItem = z.strictObject({
-  debtorMemberId: uuid.describe(
-    'Member who owes this share, from members_list. The payer may appear here to cover their own share.',
-  ),
-  amountCents: splitSchema.shape.amountCents.describe(
-    'Share of this member in cents. All shares together must equal the expense total.',
-  ),
-});
-
-const settlementCurrency = z
-  .enum(['EUR', 'CHF', 'USD', 'GBP'])
-  .describe(
-    'Currency of the debt to settle. Debts in different currencies are settled separately.',
   );
 
 export const financeTools = [
@@ -92,19 +78,14 @@ export const financeTools = [
         ),
     }),
     path: () => ['expenses'],
-    transform: (input, payload) => {
-      const { limit, offset } = input as { limit: number; offset: number };
-      if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) {
+    transform: ({ limit, offset }, payload) => {
+      if (!isRecord(payload) || !Array.isArray(payload.expenses)) {
         return payload;
       }
-      const record = payload as Record<string, unknown>;
-      const all = Array.isArray(record.expenses) ? record.expenses : undefined;
-      if (!all) {
-        return payload;
-      }
+      const all = payload.expenses;
       const page = all.slice(offset, offset + limit);
       return {
-        ...record,
+        ...payload,
         expenses: page,
         total: all.length,
         hasMore: offset + page.length < all.length,
@@ -128,13 +109,9 @@ export const financeTools = [
         category: expenseCategory
           .default('other')
           .describe('Spending category; use other when none fits.'),
-        splits: z
-          .array(splitItem)
-          .min(1)
-          .max(50)
-          .describe(
-            'Who owes what. One entry per debtor, no duplicate members, amounts summing to amountCents.',
-          ),
+        splits: splitList.describe(
+          'Who owes what. One entry per debtor, no duplicate members, amounts summing to amountCents.',
+        ),
         paidByMemberId: uuid
           .optional()
           .describe('Member who paid, from members_list. Omit when the caller paid.'),
@@ -172,7 +149,7 @@ export const financeTools = [
     name: 'expense_update',
     title: 'Edit an expense',
     description:
-      'Edits an existing expense: description, category, total amount, splits or receipt image. Only the payer may edit (otherwise not_payer); anyone else, or an expense to remove, see expense_delete. Send only the fields to change. A new amountCents needs the complete replacement splits in the same call (splits_required_with_amount), and the currency cannot be changed. Splits that stay the same keep their settled state. Pass expectedUpdatedAt (updatedAt from expenses_list) to refuse a stale edit: 409 expense_changed means read again and decide. Side effects: members whose share changed get a push, and the chat notice is refreshed when description or amount changes. The answer holds the updated expense.',
+      'Edits an existing expense: description, category, total amount, splits or receipt image. Only the payer may edit (otherwise not_payer). To remove an expense, use expense_delete. Send only the fields to change. A new amountCents needs the complete replacement splits in the same call (splits_required_with_amount), and the currency cannot be changed. Splits that stay the same keep their settled state. Pass expectedUpdatedAt (updatedAt from expenses_list) to refuse a stale edit: 409 expense_changed means read again and decide. Side effects: members whose share changed get a push, and the chat notice is refreshed when description or amount changes. The answer holds the updated expense.',
     method: 'PATCH',
     input: z.strictObject({
       id: uuid.describe('Id of the expense to edit, from expenses_list.'),
@@ -183,10 +160,7 @@ export const financeTools = [
         .describe(
           'New total in cents. Omit to keep the current total; when set, splits must be sent too.',
         ),
-      splits: z
-        .array(splitItem)
-        .min(1)
-        .max(50)
+      splits: splitList
         .optional()
         .describe(
           'Complete replacement list of debtor shares, summing to the (new) total. Omit to keep the current splits.',
@@ -201,10 +175,7 @@ export const financeTools = [
       ),
     }),
     path: (input) => ['expenses', input.id],
-    body: (input) => {
-      const { id, ...body } = input;
-      return body;
-    },
+    body: withoutId,
   }),
   defineTool({
     name: 'expense_delete',
@@ -268,7 +239,11 @@ export const financeTools = [
         'Member who owes the money and pays; same value as in the preview.',
       ),
       toMemberId: uuid.describe('Member who is owed the money; same value as in the preview.'),
-      currency: settlementCurrency,
+      currency: currency
+        .unwrap()
+        .describe(
+          'Currency of the debt to settle. Debts in different currencies are settled separately.',
+        ),
       expected: settlementPreview,
     }),
     path: () => ['expenses', 'settle-batch'],
@@ -298,10 +273,7 @@ export const financeTools = [
         'Member who paid the cash and owed the money, from members_list.',
       ),
       toMemberId: uuid.describe('Member who received the cash, from members_list.'),
-      currency: z
-        .enum(['EUR', 'CHF', 'USD', 'GBP'])
-        .default('EUR')
-        .describe('Currency of the debt that was paid.'),
+      currency: currency.describe('Currency of the debt that was paid.'),
       expectedNetCents: z
         .number()
         .int()
@@ -330,7 +302,7 @@ export const financeTools = [
     name: 'balances_get',
     title: 'Read open balances',
     description:
-      'Lists what other members currently owe the caller (creditor view), one entry per debtor and currency with debtor_id, debtor_name, amount_cents (cents), currency and oldest_age_days. Read only; the only input is the optional wgCode that picks the flat. Use it to find who to remind with reminder_send; the result is empty when nobody owes the caller. It does not show what the caller owes or debts between other members (use dashboard_get), and gives no settlement detail (use settlement_preview).',
+      'Lists what other members currently owe the caller (creditor view), one entry per debtor and currency with debtor_id, debtor_name, amount_cents (cents), currency and oldest_age_days. Read only. Use it to find who to remind with reminder_send; the result is empty when nobody owes the caller. It does not show what the caller owes or debts between other members (use dashboard_get), and gives no settlement detail (use settlement_preview).',
     method: 'GET',
     input: z.strictObject({}),
     path: () => ['reminders', 'balances'],
@@ -339,7 +311,7 @@ export const financeTools = [
     name: 'reminders_list',
     title: 'Read the reminder history',
     description:
-      'Lists the payment reminders sent in the flat in the last 30 days, newest first, at most 50, each with channel, message, amountCents, currency, oldestDebtAgeDays and sentAt. Read only, takes no arguments. Use it to check whether a reminder went out recently before calling reminder_send (which has a 48 h cooldown per debtor); for who owes the caller money use balances_get.',
+      'Lists the payment reminders sent in the flat in the last 30 days, newest first, at most 50, each with channel, message, amountCents, currency, oldestDebtAgeDays and sentAt. Read only. Use it to check whether a reminder went out recently before calling reminder_send (which has a 48 h cooldown per debtor); for who owes the caller money use balances_get.',
     method: 'GET',
     input: z.strictObject({}),
     path: () => ['reminders'],
@@ -363,10 +335,9 @@ export const financeTools = [
         .describe(
           'How to deliver: push sends a push notification (email fallback if undeliverable), inapp shows it only inside the app.',
         ),
-      currency: z
-        .enum(['EUR', 'CHF', 'USD', 'GBP'])
-        .default('EUR')
-        .describe('Currency of the debt to remind about, matching the currency in balances_get.'),
+      currency: currency.describe(
+        'Currency of the debt to remind about, matching the currency in balances_get.',
+      ),
     }),
     path: () => ['reminders'],
     body: (input) => input,

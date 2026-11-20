@@ -1,12 +1,15 @@
 import { z } from 'zod';
-import { uuid } from './shared.js';
+import { isoDateTime, uuid, withoutId } from './shared.js';
 import { defineTool } from './types.js';
 
 const units = z.enum(['piece', 'litre', 'kilogram', 'roll', 'pack']);
 const categories = z.enum(['bathroom', 'kitchen', 'cleaning', 'other']);
 const itemName = z.string().trim().min(1).max(120);
-const quantity = z.number().multipleOf(0.01).min(0).max(9999);
-const threshold = z.number().multipleOf(0.01).min(0).max(9999);
+const MAX_STOCK = 9999;
+// Quantities and thresholds share the app's bounds: 0 to 9999 in steps of 0.01.
+const stock = z.number().multipleOf(0.01).min(0).max(MAX_STOCK);
+
+const editFields = ['name', 'quantityDelta', 'quantity', 'threshold', 'unit', 'category'] as const;
 
 export const inventoryTools = [
   defineTool({
@@ -28,11 +31,11 @@ export const inventoryTools = [
       name: itemName.describe(
         'Display name of the product, for example "Toilet paper". Must be new in the flat.',
       ),
-      quantity: quantity.default(0).describe('Current stock in the chosen unit. Defaults to 0.'),
+      quantity: stock.default(0).describe('Current stock in the chosen unit. Defaults to 0.'),
       unit: units
         .default('piece')
         .describe('Unit of measure for quantity and threshold. Defaults to piece.'),
-      threshold: threshold
+      threshold: stock
         .default(1)
         .describe(
           'Low-stock limit in the chosen unit: at or below this quantity the item counts as low and goes on the shopping list. Defaults to 1.',
@@ -50,47 +53,59 @@ export const inventoryTools = [
     description:
       'Edits one supply item: rename it, change unit, category or threshold, or change its stock. For stock use quantityDelta to add or subtract (restock or relative change, no version check) or quantity to set an absolute value after a stocktake; the absolute form requires expectedQuantity and expectedUpdatedAt from a fresh inventory_list and fails with 409 version_conflict if the item changed since, so read again and retry. To record that something was used up, prefer inventory_consume. Send only the fields to change; an empty update fails with empty_update. A rename to a name already in the flat fails with 409 inventory_item_duplicate. A change that moves the stock from above to at or below threshold puts the item on the shopping list. Returns the updated item; unknown ids give 404 item_not_found.',
     method: 'PATCH',
-    input: z.strictObject({
-      id: uuid.describe('Id of the supply item to edit, from inventory_list.'),
-      name: itemName
-        .optional()
-        .describe('New display name. Must not match another item in the flat.'),
-      quantityDelta: z
-        .number()
-        .multipleOf(0.01)
-        .min(-9999)
-        .max(9999)
-        .optional()
-        .describe(
-          'Relative stock change in the item unit: positive to restock, negative to use. Result is clamped to 0..9999. Do not combine with quantity.',
-        ),
-      quantity: quantity
-        .optional()
-        .describe(
-          'Absolute stock to set in the item unit (stocktake correction). Requires expectedQuantity and expectedUpdatedAt. Do not combine with quantityDelta.',
-        ),
-      expectedQuantity: quantity
-        .optional()
-        .describe(
-          'Quantity of the item as last read from inventory_list. Required when quantity is set; a mismatch gives 409 version_conflict.',
-        ),
-      expectedUpdatedAt: z.iso
-        .datetime({ offset: true })
-        .optional()
-        .describe(
-          'updatedAt of the item as last read from inventory_list, ISO 8601 with offset. Required when quantity is set; a mismatch gives 409 version_conflict.',
-        ),
-      threshold: threshold
-        .optional()
-        .describe('New low-stock threshold in the item unit; stock at or below it counts as low.'),
-      unit: units.optional().describe('New unit of measure for quantity and threshold.'),
-      category: categories.optional().describe('New category used to group the item.'),
-    }),
+    input: z
+      .strictObject({
+        id: uuid.describe('Id of the supply item to edit, from inventory_list.'),
+        name: itemName
+          .optional()
+          .describe('New display name. Must not match another item in the flat.'),
+        quantityDelta: z
+          .number()
+          .multipleOf(0.01)
+          .min(-MAX_STOCK)
+          .max(MAX_STOCK)
+          .optional()
+          .describe(
+            'Relative stock change in the item unit: positive to restock, negative to use. Result is clamped to 0..9999. Do not combine with quantity.',
+          ),
+        quantity: stock
+          .optional()
+          .describe(
+            'Absolute stock to set in the item unit (stocktake correction). Requires expectedQuantity and expectedUpdatedAt. Do not combine with quantityDelta.',
+          ),
+        expectedQuantity: stock
+          .optional()
+          .describe(
+            'Quantity of the item as last read from inventory_list. Required when quantity is set; a mismatch gives 409 version_conflict.',
+          ),
+        expectedUpdatedAt: isoDateTime
+          .optional()
+          .describe(
+            'updatedAt of the item as last read from inventory_list, ISO 8601 with offset. Required when quantity is set; a mismatch gives 409 version_conflict.',
+          ),
+        threshold: stock
+          .optional()
+          .describe(
+            'New low-stock threshold in the item unit; stock at or below it counts as low.',
+          ),
+        unit: units.optional().describe('New unit of measure for quantity and threshold.'),
+        category: categories.optional().describe('New category used to group the item.'),
+      })
+      .refine((input) => editFields.some((field) => input[field] !== undefined), {
+        message: 'Send at least one field to change',
+        path: ['name'],
+      })
+      .refine(
+        (input) =>
+          input.quantity === undefined ||
+          (input.expectedQuantity !== undefined && input.expectedUpdatedAt !== undefined),
+        {
+          message: 'quantity needs expectedQuantity and expectedUpdatedAt',
+          path: ['quantity'],
+        },
+      ),
     path: (input) => ['inventory', input.id],
-    body: (input) => {
-      const { id, ...body } = input;
-      return body;
-    },
+    body: withoutId,
   }),
   defineTool({
     name: 'inventory_consume',
@@ -110,7 +125,7 @@ export const inventoryTools = [
         ),
     }),
     path: (input) => ['inventory', input.id, 'consume'],
-    body: (input) => ({ delta: input.delta }),
+    body: withoutId,
   }),
   defineTool({
     name: 'inventory_remove',

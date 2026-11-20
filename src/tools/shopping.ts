@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { isoDateTime, uuid } from './shared.js';
+import { isoDateTime, uuid, withoutId } from './shared.js';
 import { defineTool } from './types.js';
 
 const itemName = z
@@ -18,6 +18,14 @@ const quantity = z
   .optional()
   .describe(
     'Free-text amount shown next to the name, for example "2" or "1 kg". Omit when no amount is needed.',
+  );
+const expectedUpdatedAt = isoDateTime.describe(
+  "The item's updatedAt exactly as returned by shopping_list (ISO 8601 with offset). Guards against concurrent edits.",
+);
+const expectedBoughtAt = isoDateTime
+  .nullable()
+  .describe(
+    "The item's boughtAt exactly as returned by shopping_list, or null if it is still open. Guards against concurrent edits.",
   );
 
 export const shoppingTools = [
@@ -53,28 +61,47 @@ export const shoppingTools = [
     name: 'shopping_set_bought',
     title: 'Mark an item as bought',
     description:
-      "Mark one open item as bought, or put a bought item back on the open list (bought=false). Any member may do it. It only changes the bought state: it cannot rename the item, and to delete it use shopping_remove. Uses optimistic locking: call shopping_list first and pass the item's updatedAt and boughtAt unchanged. If someone changed the item in between, the call fails with 409 shopping_item_changed and nothing is written: read the list again and decide again. If the item is already in the requested state the call succeeds without changes. Marking as bought records the caller as boughtBy and sets boughtAt to now; reopening clears both. Reopening can fail with 409 shopping_item_duplicate when another open item has the same name. Returns the updated item; item_not_found for an unknown id.",
+      "Mark one open item as bought, or put a bought item back on the open list (bought=false). Any member may do it. It only changes the bought state: to rename the item or change its quantity use shopping_update, and to delete it use shopping_remove. Uses optimistic locking: call shopping_list first and pass the item's updatedAt and boughtAt unchanged. If someone changed the item in between, the call fails with 409 shopping_item_changed and nothing is written: read the list again and decide again. If the item is already in the requested state the call succeeds without changes. Marking as bought records the caller as boughtBy and sets boughtAt to now; reopening clears both. Reopening can fail with 409 shopping_item_duplicate when another open item has the same name. Returns the updated item; item_not_found for an unknown id.",
     method: 'PATCH',
     input: z.strictObject({
       id: uuid.describe('Id of the shopping item, from shopping_list.'),
       bought: z
         .boolean()
         .describe('true marks the item as bought by the caller; false reopens a bought item.'),
-      expectedUpdatedAt: isoDateTime.describe(
-        "The item's updatedAt exactly as returned by shopping_list (ISO 8601 with offset). Guards against concurrent edits.",
-      ),
-      expectedBoughtAt: isoDateTime
-        .nullable()
-        .describe(
-          "The item's boughtAt exactly as returned by shopping_list, or null if it is still open. Guards against concurrent edits.",
-        ),
+      expectedUpdatedAt,
+      expectedBoughtAt,
     }),
     path: (input) => ['shopping', input.id],
-    body: (input) => ({
-      bought: input.bought,
-      expectedUpdatedAt: input.expectedUpdatedAt,
-      expectedBoughtAt: input.expectedBoughtAt,
-    }),
+    body: withoutId,
+  }),
+  defineTool({
+    name: 'shopping_update',
+    title: 'Edit a shopping item',
+    description:
+      "Rename a shopping item or change or clear its quantity, for example to fix a typo or a wrong amount, keeping its id, adder and bought state. Any member may do it. Send only the fields to change, at least one of name and quantity. To tick an item off or reopen it use shopping_set_bought; to delete it use shopping_remove. Uses optimistic locking: call shopping_list first and pass the item's updatedAt and boughtAt unchanged. If someone changed the item in between, the call fails with 409 shopping_item_changed and nothing is written: read the list again and decide again. Renaming to the name of another open item fails with 409 shopping_item_duplicate. Nobody is notified. Returns the updated item; item_not_found for an unknown id.",
+    method: 'PATCH',
+    input: z
+      .strictObject({
+        id: uuid.describe('Id of the shopping item, from shopping_list.'),
+        name: itemName.optional().describe('New item name. Omit to keep the current one.'),
+        quantity: z
+          .string()
+          .trim()
+          .max(40)
+          .nullable()
+          .optional()
+          .describe(
+            'New free-text amount, for example "2" or "1 kg". Send null or an empty string to clear it. Omit to keep the current one.',
+          ),
+        expectedUpdatedAt,
+        expectedBoughtAt,
+      })
+      .refine((input) => input.name !== undefined || input.quantity !== undefined, {
+        message: 'Send at least one of name and quantity',
+        path: ['name'],
+      }),
+    path: (input) => ['shopping', input.id],
+    body: withoutId,
   }),
   defineTool({
     name: 'shopping_remove',

@@ -1,17 +1,9 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { SupabaseAuthConfig } from './config.js';
+import { DEFAULT_TIMEOUT_MS, type SupabaseAuthConfig } from './config.js';
 
+/** Cookie format of `@supabase/ssr`: `base64-<base64url(JSON)>`, chunked at this many characters. */
 export const MAX_CHUNK_SIZE = 3180;
-
-/** Upper bound for one Supabase token call; a hung call must not block every later one. */
-const DEFAULT_AUTH_TIMEOUT_MS = 10_000;
-
-/**
- * Mirrors `@supabase/ssr` (0.12.5): sessions are stored as
- * `base64-<base64url(JSON)>`, chunked after MAX_CHUNK_SIZE. Readers accept
- * both this scheme and the legacy `encodeURIComponent` payload.
- */
 const BASE64_PREFIX = 'base64-';
 
 type SupabaseSession = {
@@ -29,19 +21,8 @@ export type SessionController = {
   invalidate(): void;
 };
 
-export type FetchLike = typeof fetch;
-
-export function storageKeyFor(url: string): string {
+function storageKeyFor(url: string): string {
   return `sb-${new URL(url).hostname.split('.')[0]}-auth-token`;
-}
-
-function canDecode(value: string): boolean {
-  try {
-    decodeURIComponent(value);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export function sessionCookiePairs(
@@ -53,31 +34,20 @@ export function sessionCookiePairs(
     return [{ name: key, value: encoded }];
   }
 
-  // Chunk the URI-encoded form so no chunk splits a percent-escape, then store
-  // each chunk back in decoded form — exactly what `createChunks` ships.
+  // The encoded form is plain ASCII with no percent-escapes, so any cut point is safe.
   const pairs: Array<{ name: string; value: string }> = [];
-  let rest = encodeURIComponent(encoded);
-  let index = 0;
-  while (rest.length > 0) {
-    let cut = Math.min(rest.length, MAX_CHUNK_SIZE);
-    while (cut > 1 && !canDecode(rest.slice(0, cut))) {
-      cut -= 1;
-    }
-    const head = rest.slice(0, cut);
-    pairs.push({ name: `${key}.${index}`, value: decodeURIComponent(head) });
-    rest = rest.slice(cut);
-    index += 1;
+  for (let start = 0; start < encoded.length; start += MAX_CHUNK_SIZE) {
+    pairs.push({
+      name: `${key}.${pairs.length}`,
+      value: encoded.slice(start, start + MAX_CHUNK_SIZE),
+    });
   }
   return pairs;
 }
 
-function decodeCookiePayload(raw: string): string | undefined {
+function decodeCookiePayload(raw: string): string {
   if (raw.startsWith(BASE64_PREFIX)) {
-    try {
-      return Buffer.from(raw.slice(BASE64_PREFIX.length), 'base64url').toString('utf8');
-    } catch {
-      return undefined;
-    }
+    return Buffer.from(raw.slice(BASE64_PREFIX.length), 'base64url').toString('utf8');
   }
   try {
     return decodeURIComponent(raw);
@@ -87,12 +57,8 @@ function decodeCookiePayload(raw: string): string | undefined {
 }
 
 function sessionFromCookieValue(raw: string): SupabaseSession | undefined {
-  const payload = decodeCookiePayload(raw);
-  if (payload === undefined) {
-    return undefined;
-  }
   try {
-    const parsed: unknown = JSON.parse(payload);
+    const parsed: unknown = JSON.parse(decodeCookiePayload(raw));
     return isSupabaseSession(parsed) ? parsed : undefined;
   } catch {
     return undefined;
@@ -111,40 +77,49 @@ function isSupabaseSession(value: unknown): value is SupabaseSession {
   );
 }
 
-function normalizeSession(payload: Record<string, unknown>): SupabaseSession | undefined {
-  const expiresIn = Number(payload.expires_in);
-  const expiresAtRaw = Number(payload.expires_at);
+/** The session in a token endpoint answer, or undefined when it lacks tokens or an expiry. */
+function normalizeSession(payload: unknown): SupabaseSession | undefined {
+  if (typeof payload !== 'object' || payload === null) {
+    return undefined;
+  }
+  const { access_token, refresh_token, expires_at, expires_in, token_type, user } =
+    payload as Record<string, unknown>;
+  if (!access_token || typeof access_token !== 'string') {
+    return undefined;
+  }
+  if (!refresh_token || typeof refresh_token !== 'string') {
+    return undefined;
+  }
   let expiresAt = 0;
-  if (expiresAtRaw > 0) {
-    expiresAt = expiresAtRaw;
-  } else if (expiresIn > 0) {
-    expiresAt = Math.floor(Date.now() / 1000) + expiresIn;
+  if (typeof expires_at === 'number' && expires_at > 0) {
+    expiresAt = expires_at;
+  } else if (typeof expires_in === 'number' && expires_in > 0) {
+    expiresAt = Math.floor(Date.now() / 1000) + expires_in;
+  }
+  if (expiresAt === 0) {
+    return undefined;
   }
   const session: SupabaseSession = {
-    access_token: String(payload.access_token ?? ''),
-    refresh_token: String(payload.refresh_token ?? ''),
+    access_token,
+    refresh_token,
     expires_at: expiresAt,
   };
-  if (typeof payload.expires_in === 'number') {
-    session.expires_in = payload.expires_in;
+  if (typeof expires_in === 'number') {
+    session.expires_in = expires_in;
   }
-  if (typeof payload.token_type === 'string') {
-    session.token_type = payload.token_type;
+  if (typeof token_type === 'string') {
+    session.token_type = token_type;
   }
-  if (payload.user !== undefined) {
-    session.user = payload.user;
+  if (user !== undefined) {
+    session.user = user;
   }
-  return isSupabaseSession(session) && session.expires_at > 0 ? session : undefined;
+  return session;
 }
 
 /** `name=value` pairs of every `Set-Cookie` header; attributes after `;` are dropped. */
 function parseSetCookies(response: Response): Map<string, string> {
-  const headers =
-    typeof response.headers.getSetCookie === 'function'
-      ? response.headers.getSetCookie()
-      : [response.headers.get('set-cookie') ?? ''];
   const cookies = new Map<string, string>();
-  for (const header of headers) {
+  for (const header of response.headers.getSetCookie()) {
     const [pair] = header.split(';');
     const separator = pair ? pair.indexOf('=') : -1;
     if (!pair || separator < 0) {
@@ -169,9 +144,9 @@ function sessionAfterSetCookies(
 ): SupabaseSession | undefined {
   let next = current;
 
-  if (cookies.has(key)) {
-    const value = cookies.get(key) ?? '';
-    next = value ? (sessionFromCookieValue(value) ?? next) : undefined;
+  const single = cookies.get(key);
+  if (single !== undefined) {
+    next = single ? (sessionFromCookieValue(single) ?? next) : undefined;
   }
 
   if (cookies.has(`${key}.0`)) {
@@ -186,98 +161,104 @@ function sessionAfterSetCookies(
   return next;
 }
 
+const authFailed = (cause: unknown): Error => new Error('auth_failed', { cause });
+
+/** How long a refused refresh waits for the sibling that won the race to write its session. */
+const ROTATION_WAIT_MS = 1_000;
+const ROTATION_POLL_MS = 250;
+
 export function createSessionController(
   authConfig: SupabaseAuthConfig,
-  fetchImpl: FetchLike = fetch,
-  timeoutMs = DEFAULT_AUTH_TIMEOUT_MS,
+  fetchImpl: typeof fetch = fetch,
+  timeoutMs = DEFAULT_TIMEOUT_MS,
 ): SessionController {
   const key = storageKeyFor(authConfig.url);
-  let session: SupabaseSession | undefined;
-  let loaded = false;
+  let session = readCache();
   let pending: Promise<SupabaseSession> | undefined;
+  /** The configured refresh token is single-use: once tried, replaying it only trips reuse detection. */
+  let bootstrapTried = false;
+  /** The last refresh token Supabase refused (or the app signed out): a cache holding it is dead. */
+  let refusedToken: string | undefined;
 
   function readCache(): SupabaseSession | undefined {
     try {
-      if (!existsSync(authConfig.sessionCachePath)) {
-        return undefined;
-      }
       const parsed: unknown = JSON.parse(readFileSync(authConfig.sessionCachePath, 'utf8'));
       return isSupabaseSession(parsed) ? parsed : undefined;
     } catch {
+      // No cache yet, or one that is unreadable or not a session: sign in again.
       return undefined;
     }
   }
 
-  function persist(next: SupabaseSession | undefined): void {
+  function persist(next: SupabaseSession): void {
     try {
       mkdirSync(dirname(authConfig.sessionCachePath), { recursive: true, mode: 0o700 });
-      if (next === undefined) {
-        if (existsSync(authConfig.sessionCachePath)) {
-          rmSync(authConfig.sessionCachePath, { force: true });
-        }
-        return;
+      // Write beside the cache and rename over it: concurrent readers never see a partial file
+      // and the result is owner-only even when an older, wider file was there before.
+      const temp = `${authConfig.sessionCachePath}.${process.pid}.tmp`;
+      try {
+        rmSync(temp, { force: true });
+        writeFileSync(temp, `${JSON.stringify(next)}\n`, { mode: 0o600, flag: 'wx' });
+        renameSync(temp, authConfig.sessionCachePath);
+      } catch (error) {
+        rmSync(temp, { force: true });
+        throw error;
       }
-      writeFileSync(authConfig.sessionCachePath, `${JSON.stringify(next)}\n`, { mode: 0o600 });
-      chmodSync(authConfig.sessionCachePath, 0o600);
     } catch {
       // A read-only cache never blocks a sign-in that already succeeded.
     }
   }
 
+  /** Calls the token endpoint; `'rejected'` means Supabase refused the grant itself. */
   async function tokenRequest(
-    body: Record<string, unknown>,
+    grantType: 'refresh_token' | 'password',
+    fields: Record<string, string>,
   ): Promise<SupabaseSession | 'rejected'> {
     let response: Response;
     try {
-      response = await fetchImpl(
-        `${authConfig.url}/auth/v1/token?grant_type=${String(body.grant_type)}`,
-        {
-          method: 'POST',
-          headers: {
-            apikey: authConfig.publishableKey,
-            'content-type': 'application/json',
-          },
-          body: JSON.stringify(body),
-          signal: AbortSignal.timeout(timeoutMs),
+      response = await fetchImpl(`${authConfig.url}/auth/v1/token?grant_type=${grantType}`, {
+        method: 'POST',
+        headers: {
+          apikey: authConfig.publishableKey,
+          'content-type': 'application/json',
         },
-      );
-    } catch {
-      throw new Error('auth_failed');
+        body: JSON.stringify({ grant_type: grantType, ...fields }),
+        signal: AbortSignal.timeout(timeoutMs),
+      });
+    } catch (error) {
+      throw authFailed(error);
     }
     if (response.status === 400 || response.status === 401 || response.status === 403) {
       return 'rejected';
     }
     if (!response.ok) {
-      throw new Error('auth_failed');
+      throw authFailed(`token endpoint answered ${response.status}`);
     }
     let payload: unknown;
     try {
       payload = await response.json();
-    } catch {
-      throw new Error('auth_failed');
+    } catch (error) {
+      throw authFailed(error);
     }
-    const next = normalizeSession(
-      typeof payload === 'object' && payload !== null ? (payload as Record<string, unknown>) : {},
-    );
+    const next = normalizeSession(payload);
     if (!next) {
-      throw new Error('auth_failed');
+      throw authFailed('token endpoint answered without a usable session');
     }
     return next;
   }
 
   async function bootstrapSession(): Promise<SupabaseSession | undefined> {
-    if (authConfig.bootstrapRefreshToken) {
-      const refreshed = await tokenRequest({
-        grant_type: 'refresh_token',
+    if (authConfig.bootstrapRefreshToken && !bootstrapTried) {
+      const refreshed = await tokenRequest('refresh_token', {
         refresh_token: authConfig.bootstrapRefreshToken,
       });
+      bootstrapTried = true;
       if (refreshed !== 'rejected') {
         return refreshed;
       }
     }
     if (authConfig.email && authConfig.password) {
-      const signedIn = await tokenRequest({
-        grant_type: 'password',
+      const signedIn = await tokenRequest('password', {
         email: authConfig.email,
         password: authConfig.password,
       });
@@ -288,27 +269,64 @@ export function createSessionController(
     return undefined;
   }
 
-  function isFresh(candidate: SupabaseSession | undefined): candidate is SupabaseSession {
-    return candidate !== undefined && candidate.expires_at * 1000 > Date.now() + 60_000;
+  function isFresh(candidate: SupabaseSession): boolean {
+    return candidate.expires_at * 1000 > Date.now() + 60_000;
+  }
+
+  /**
+   * Several servers share one cache and a refresh token works once. Takes up a newer session
+   * another process wrote there, instead of replaying our old token or deleting its session.
+   */
+  function adoptRotated(): boolean {
+    const cached = readCache();
+    if (
+      !session ||
+      !cached ||
+      cached.refresh_token === session.refresh_token ||
+      cached.expires_at <= session.expires_at
+    ) {
+      return false;
+    }
+    session = cached;
+    return true;
+  }
+
+  /** `adoptRotated`, polling a moment: the race winner writes its session only after its answer. */
+  async function awaitRotated(): Promise<boolean> {
+    for (let waited = 0; ; waited += ROTATION_POLL_MS) {
+      if (adoptRotated()) {
+        return true;
+      }
+      if (waited >= ROTATION_WAIT_MS) {
+        return false;
+      }
+      await new Promise((resolve) => setTimeout(resolve, ROTATION_POLL_MS));
+    }
+  }
+
+  /** The shared cache, unless it holds a refresh token that was already refused. */
+  function usableCache(): SupabaseSession | undefined {
+    const cached = readCache();
+    return cached && cached.refresh_token !== refusedToken ? cached : undefined;
   }
 
   async function ensureSession(): Promise<SupabaseSession> {
     if (pending) {
       return pending;
     }
-    if (!loaded) {
-      session ??= readCache();
-      loaded = true;
-    }
-    const current = session;
-    if (isFresh(current)) {
-      return current;
+    if (session && isFresh(session)) {
+      return session;
     }
 
     pending = (async () => {
-      if (session) {
-        const refreshed = await tokenRequest({
-          grant_type: 'refresh_token',
+      // Without a session of its own, a sibling may already have signed in: take that up
+      // before spending the single-use bootstrap token.
+      session ??= usableCache();
+      if (session && (isFresh(session) || (adoptRotated() && isFresh(session)))) {
+        return session;
+      }
+      for (let attempt = 0; session && attempt < 2; attempt++) {
+        const refreshed = await tokenRequest('refresh_token', {
           refresh_token: session.refresh_token,
         });
         if (refreshed !== 'rejected') {
@@ -316,12 +334,23 @@ export function createSessionController(
           persist(session);
           return refreshed;
         }
+        // Rejected: a sibling may have won the race and rotated the token just now.
+        if (!(await awaitRotated())) {
+          break;
+        }
+        if (isFresh(session)) {
+          return session;
+        }
+      }
+      // The cache stays: a sibling's newer session may still land there, and deleting it
+      // could remove that one instead of ours.
+      if (session) {
+        refusedToken = session.refresh_token;
         session = undefined;
-        persist(undefined);
       }
       const fresh = await bootstrapSession();
       if (!fresh) {
-        throw new Error('auth_failed');
+        throw authFailed('no credential was accepted');
       }
       session = fresh;
       persist(session);
@@ -351,6 +380,15 @@ export function createSessionController(
         return;
       }
       const next = sessionAfterSetCookies(key, cookies, session);
+      if (next === undefined) {
+        // The app signed this session out. The shared cache may hold a sibling's newer one:
+        // leave it for the next call instead of deleting it.
+        if (session) {
+          refusedToken = session.refresh_token;
+        }
+        session = undefined;
+        return;
+      }
       if (JSON.stringify(next) !== JSON.stringify(session)) {
         session = next;
         persist(session);
@@ -363,9 +401,14 @@ export function createSessionController(
         // would discard its result and make the next caller sign in again.
         return;
       }
-      session = undefined;
-      loaded = true;
-      persist(undefined);
+      // A sibling may have rotated the session since we loaded it: adopt that one and leave
+      // the cache alone instead of overwriting it with our stale refresh token.
+      if (session && !adoptRotated()) {
+        // The access token was refused; its refresh token is still the live one. Keep it so
+        // the next call refreshes instead of replaying a long-rotated bootstrap token. Only
+        // the in-memory copy changes: the shared cache may already hold a newer session.
+        session = { ...session, expires_at: 0 };
+      }
     },
   };
 }

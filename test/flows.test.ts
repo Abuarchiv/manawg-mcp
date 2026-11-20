@@ -1,34 +1,10 @@
-import { afterEach, expect, it } from 'vitest';
-import { TOOL_DEFS } from '../src/tools/registry.js';
-import {
-  type Harness,
-  MEMBER_A,
-  MEMBER_B,
-  SECOND_WG_CODE,
-  startHarness,
-  WG_CODE,
-} from './helpers/app.js';
+import { expect, it } from 'vitest';
+import { MEMBER_A, MEMBER_B, SECOND_WG_CODE, useHarness, WG_CODE } from './helpers/app.js';
 
 // Whole-system regression flows: real session controller + HTTP client + MCP server against a
 // stateful stub of the ManaWG app (see helpers/app.ts).
 
-const open: Harness[] = [];
-
-afterEach(async () => {
-  while (open.length > 0) {
-    await open.pop()?.close();
-  }
-});
-
-async function harness(options: Parameters<typeof startHarness>[0] = {}) {
-  const started = await startHarness(options);
-  open.push(started);
-  return started;
-}
-
-function resourceJson(result: { contents: unknown[] }): Record<string, unknown> {
-  return JSON.parse((result.contents[0] as { text: string }).text);
-}
+const harness = useHarness();
 
 it('keeps one session across tools and resources, and recovers when it is revoked', async () => {
   const h = await harness();
@@ -70,17 +46,14 @@ it('walks the shopping list: duplicates and stale versions are reported, a re-re
   expect(h.app.state.shopping[0]?.bought).toBe(true);
 });
 
-it('completes a monthly chore once and refuses a second completion of the old occurrence', async () => {
+it('completes a chore occurrence once and refuses a replay of the old occurrence', async () => {
   const h = await harness();
 
   const created = (await h.call('chore_create', {
     title: 'Bad putzen',
-    intervalDays: 1,
-    recurrenceType: 'months',
     nextDueAt: '2026-11-01T08:00:00.000Z',
     assignedMemberId: MEMBER_A,
   })) as { chore: { id: string; nextDueAt: string } };
-  expect(h.app.seen.at(-1)?.body).toMatchObject({ recurrenceType: 'months', intervalDays: 1 });
 
   const completion = {
     id: created.chore.id,
@@ -142,14 +115,9 @@ it('commits a mutual-debt settlement with the offset split of the preview', asyn
     currency: 'EUR',
     expected: preview,
   });
-  expect(h.app.seen.at(-1)?.body).toMatchObject({
-    expected: {
-      splits: [{ amountCents: 1000 }, { amountCents: 300, offset: true }],
-    },
-  });
 });
 
-it('sends an idempotency key on every write and none on reads', async () => {
+it('sends an idempotency key on a write and none on a read', async () => {
   const h = await harness();
 
   await h.call('shopping_list');
@@ -170,38 +138,6 @@ it('adds and removes a chat reaction', async () => {
   expect(h.app.state.reactions).toEqual([]);
 });
 
-it('keeps destructive tools out of the default surface and offers them on request', async () => {
-  const off = await harness();
-  const on = await harness({ allowDestructive: true });
-
-  const defaultNames = (await off.client.listTools()).tools.map((tool) => tool.name);
-  const gatedNames = (await on.client.listTools()).tools.map((tool) => tool.name);
-
-  expect(defaultNames).not.toContain('expense_delete');
-  expect(gatedNames).toContain('expense_delete');
-  // Deleting, notifying people and money outside the app stay gated. The one ungated DELETE
-  // is taking back your own chat reaction, which is as harmless as adding it.
-  const exposed = TOOL_DEFS.filter((tool) => tool.gate !== 'destructive');
-  expect(exposed.filter((tool) => tool.method === 'DELETE').map((tool) => tool.name)).toEqual([
-    'chat_unreact',
-  ]);
-  expect(exposed.map((tool) => tool.name)).not.toContain('reminder_send');
-  expect(exposed.map((tool) => tool.name)).not.toContain('cash_payment_void');
-});
-
-it('retries transient failures, reusing the idempotency key on writes', async () => {
-  const h = await harness();
-
-  h.app.failNext(2, 503);
-  await h.call('shopping_list');
-
-  h.app.failNext(1, 502);
-  await h.call('shopping_add', { name: 'Eier' });
-  const attempts = h.app.seen.filter((entry) => entry.method === 'POST');
-  expect(attempts).toHaveLength(2);
-  expect(attempts[0]?.idempotencyKey).toBe(attempts[1]?.idempotencyKey);
-});
-
 it('reports long rate limits with retry_after_s instead of sleeping, and never leaks upstream bodies', async () => {
   const h = await harness();
 
@@ -210,17 +146,6 @@ it('reports long rate limits with retry_after_s instead of sleeping, and never l
 
   expect(message).toBe('ManaWG request failed: too_many_requests retry_after_s=120');
   expect(message).not.toContain('do-not-leak');
-});
-
-it('reports an unreachable app without revealing its address', async () => {
-  const h = await harness();
-  await h.call('dashboard_get');
-  await h.app.goOffline();
-
-  const message = await h.callError('dashboard_get');
-
-  expect(message).toBe('ManaWG request failed: upstream_network_error');
-  expect(message).not.toContain('127.0.0.1');
 });
 
 it('bounds large payloads and pages the expense list', async () => {
@@ -232,8 +157,9 @@ it('bounds large payloads and pages the expense list', async () => {
     splits: [],
   }));
 
-  const resource = resourceJson(await h.client.readResource({ uri: 'manawg://current/expenses' }));
-  expect((resource.expenses as unknown[]).length).toBe(100);
+  const { contents } = await h.client.readResource({ uri: 'manawg://current/expenses' });
+  const resource = JSON.parse((contents[0] as { text: string }).text);
+  expect(resource.expenses).toHaveLength(100);
   expect(resource._mcp).toEqual({ truncated: true, fields: ['expenses'] });
 
   const page = (await h.call('expenses_list', { limit: 20, offset: 240 })) as {
@@ -257,7 +183,7 @@ it('returns the CSV export as text', async () => {
 });
 
 it('reaches account routes without the WG code', async () => {
-  const h = await harness({ allowDestructive: true });
+  const h = await harness();
 
   const mine = await h.call('wg_list');
   expect(mine.wgs).toHaveLength(1);

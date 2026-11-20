@@ -1,5 +1,5 @@
 {
-  "_note": "Snapshot of the ManaWG app API surface under /api/wg (apps/web/src/app/api/wg/**/route.ts). Refresh when the app adds or moves routes.",
+  "_note": "Snapshot of the ManaWG app API surface under /api/wg (apps/web/src/app/api/wg/**/route.ts). Refresh with `node scripts/app-routes.mjs <path-to-manawg-app>`.",
   "routes": [
     "DELETE /api/wg/{code}",
     "DELETE /api/wg/{code}/absences/{id}",
@@ -20,6 +20,7 @@
     "DELETE /api/wg/{code}/shopping",
     "DELETE /api/wg/{code}/shopping/{id}",
     "GET /api/wg/invites/{token}",
+    "GET /api/wg/invites/{token}/preview",
     "GET /api/wg/mine",
     "GET /api/wg/{code}",
     "GET /api/wg/{code}/absences",
@@ -73,6 +74,7 @@
     "POST /api/wg/{code}/chat/read",
     "POST /api/wg/{code}/chores",
     "POST /api/wg/{code}/chores/{id}/complete",
+    "POST /api/wg/{code}/chores/{id}/complete/undo",
     "POST /api/wg/{code}/events",
     "POST /api/wg/{code}/events/{id}/occurrence",
     "POST /api/wg/{code}/expenses",

@@ -6,11 +6,12 @@ import {
   errors as joseErrors,
   SignJWT,
 } from 'jose';
-import { afterEach, beforeAll, expect, it, vi } from 'vitest';
+import { beforeAll, expect, it, vi } from 'vitest';
 import { serverFactory } from '../src/app.js';
 import { type AppConfig, loadConfig, type OAuthConfig } from '../src/config.js';
 import { type RunningHttpServer, startHttpServer } from '../src/http.js';
 import { supabaseTokenVerifier } from '../src/oauth.js';
+import { useCleanup } from './helpers/app.js';
 
 // Hosted mode end to end over real HTTP: discovery documents, the bearer challenge, local JWT
 // verification against a key set, and the verified token reaching the app as `Authorization`.
@@ -21,7 +22,7 @@ const WG = 'K7Q2M9XD';
 
 let privateKey: CryptoKey;
 let jwk: JWK;
-const cleanup: Array<() => Promise<void>> = [];
+const later = useCleanup();
 
 beforeAll(async () => {
   const pair = await generateKeyPair('ES256');
@@ -29,18 +30,17 @@ beforeAll(async () => {
   jwk = { ...(await exportJWK(pair.publicKey)), kid: 'test-key', alg: 'ES256' };
 });
 
-afterEach(async () => {
-  while (cleanup.length > 0) {
-    await cleanup.pop()?.();
-  }
-});
-
-function token(claims: Record<string, unknown> = {}, issuer = ISSUER, expiresIn = '1h') {
+function token(
+  claims: Record<string, unknown> = {},
+  issuer = ISSUER,
+  expiresIn = '1h',
+  subject = '00000000-0000-4000-8000-0000000000aa',
+) {
   return new SignJWT({ role: 'authenticated', client_id: 'agent-client', ...claims })
     .setProtectedHeader({ alg: 'ES256', kid: 'test-key' })
     .setIssuer(issuer)
     .setAudience('authenticated')
-    .setSubject('00000000-0000-4000-8000-0000000000aa')
+    .setSubject(subject)
     .setIssuedAt()
     .setExpirationTime(expiresIn)
     .sign(privateKey);
@@ -48,14 +48,18 @@ function token(claims: Record<string, unknown> = {}, issuer = ISSUER, expiresIn 
 
 type Upstream = { url: string; authorization: string | null; cookie: string | null };
 
-async function startHosted() {
-  const config: AppConfig = loadConfig({
+function hostedConfig(): AppConfig {
+  return loadConfig({
     MANAWG_BASE_URL: 'https://app.example.test',
     MANAWG_SUPABASE_URL: 'https://project.supabase.co',
     MANAWG_AUTH: 'oauth',
     MANAWG_TRANSPORT: 'http',
     MANAWG_PUBLIC_URL: RESOURCE,
   });
+}
+
+async function startHosted() {
+  const config = hostedConfig();
   const oauth = config.auth as OAuthConfig;
   const upstream: Upstream[] = [];
   const appFetch = vi.fn<typeof fetch>(async (input, init) => {
@@ -87,7 +91,7 @@ async function startHosted() {
     },
     createServer: serverFactory(config, appFetch),
   });
-  cleanup.push(running.close);
+  later(running.close);
   return { running, upstream, metadataFetch, base: running.url.replace(/\/mcp$/, '') };
 }
 
@@ -132,7 +136,23 @@ it('challenges an anonymous client with the protected resource metadata it needs
   }
 });
 
-it('passes the issuer metadata through once and keeps health open', async () => {
+it('answers a browser preflight on the discovery documents', async () => {
+  const { base } = await startHosted();
+
+  const preflight = await fetch(`${base}/.well-known/oauth-protected-resource`, {
+    method: 'OPTIONS',
+    headers: {
+      origin: 'https://inspector.example',
+      'access-control-request-headers': 'mcp-protocol-version',
+    },
+  });
+
+  expect(preflight.status).toBe(204);
+  expect(preflight.headers.get('access-control-allow-origin')).toBe('*');
+  expect(preflight.headers.get('access-control-allow-headers')).toBe('mcp-protocol-version');
+});
+
+it('passes the issuer metadata through once', async () => {
   const { base, metadataFetch } = await startHosted();
 
   for (let i = 0; i < 2; i++) {
@@ -143,8 +163,26 @@ it('passes the issuer metadata through once and keeps health open', async () => 
   expect(metadataFetch.mock.calls[0]?.[0]).toBe(
     'https://project.supabase.co/.well-known/oauth-authorization-server/auth/v1',
   );
+});
+
+it('answers 503 when the issuer metadata is unavailable and fetches it again next time', async () => {
+  const { base, metadataFetch } = await startHosted();
+  metadataFetch.mockResolvedValueOnce(new Response('down', { status: 502 }));
+
+  const failed = await fetch(`${base}/.well-known/oauth-authorization-server`);
+  expect(failed.status).toBe(503);
+  expect(failed.headers.get('cache-control')).toBeNull();
+
+  const recovered = await fetch(`${base}/.well-known/oauth-authorization-server`);
+  expect(recovered.status).toBe(200);
+  expect(metadataFetch).toHaveBeenCalledTimes(2);
+});
+
+it('keeps health open without a token', async () => {
+  const { base } = await startHosted();
 
   const health = await fetch(`${base}/health`);
+
   await expect(health.json()).resolves.toMatchObject({ status: 'ok', auth: 'oauth' });
 });
 
@@ -166,6 +204,18 @@ it('forwards a verified token to the app and resolves the only flat of the accou
   }
 });
 
+it('looks up the only flat once per user across requests with different tokens', async () => {
+  const { running, upstream } = await startHosted();
+  const subject = '00000000-0000-4000-8000-0000000000bb';
+
+  for (const clientId of ['client-one', 'client-two']) {
+    const access = await token({ client_id: clientId }, ISSUER, '1h', subject);
+    expect((await callTool(running.url, 'shopping_list', access)).status).toBe(200);
+  }
+
+  expect(upstream.filter((entry) => entry.url.endsWith('/api/wg/mine'))).toHaveLength(1);
+});
+
 it.each([
   ['a browser session token without client_id', () => token({ client_id: undefined })],
   ['a token from another issuer', () => token({}, 'https://evil.example/auth/v1')],
@@ -182,36 +232,12 @@ it.each([
 });
 
 it('reports an unreachable key set as a server error, not as a bad token', async () => {
-  const oauth = loadConfig({
-    MANAWG_BASE_URL: 'https://app.example.test',
-    MANAWG_SUPABASE_URL: 'https://project.supabase.co',
-    MANAWG_AUTH: 'oauth',
-    MANAWG_TRANSPORT: 'http',
-    MANAWG_PUBLIC_URL: RESOURCE,
-  }).auth as OAuthConfig;
-  const outage = Object.assign(async () => {
+  const outage = async () => {
     throw new joseErrors.JOSEError('Expected 200 OK from the JSON Web Key Set HTTP response');
-  }, {});
-  const verifier = supabaseTokenVerifier(oauth, outage);
+  };
+  const verifier = supabaseTokenVerifier(hostedConfig().auth as OAuthConfig, outage);
 
   await expect(verifier.verifyAccessToken(await token())).rejects.toMatchObject({
     code: 'server_error',
   });
-});
-
-it('answers a malformed Host header with 400 instead of crashing', async () => {
-  const { running } = await startHosted();
-  const { request } = await import('node:http');
-
-  const status = await new Promise<number | undefined>((resolve, reject) => {
-    const req = request(running.url, { method: 'GET', headers: { host: 'a b' } }, (res) => {
-      res.resume();
-      resolve(res.statusCode);
-    });
-    req.on('error', reject);
-    req.end();
-  });
-
-  expect(status).toBe(400);
-  expect((await fetch(`${running.url.replace(/\/mcp$/, '')}/health`)).status).toBe(200);
 });

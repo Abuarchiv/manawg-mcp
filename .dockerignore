@@ -1,11 +1,4 @@
 .git
-.github
 node_modules
 dist
-test
-scripts
-*.md
 .env*
-.env.example
-Dockerfile
-.dockerignore

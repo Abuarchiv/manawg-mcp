@@ -3,7 +3,7 @@
  * bodies are never forwarded: only codes on this allowlist reach the model.
  */
 
-export const SAFE_ERROR_MESSAGE = 'ManaWG request failed';
+const SAFE_ERROR_MESSAGE = 'ManaWG request failed';
 
 /** The only validation-style code whose `details` snippet is passed through. */
 export const DETAIL_SAFE_CODE = 'validation_errors';
@@ -44,6 +44,7 @@ export const SAFE_UPSTREAM_CODES = new Set([
   'comment_invalid',
   'comment_not_found',
   'completed_at_invalid',
+  'completion_not_found',
   'conflict',
   'content_invalid',
   'content_locked',
@@ -91,6 +92,8 @@ export const SAFE_UPSTREAM_CODES = new Set([
   'idempotency_conflict',
   'idempotency_key_required',
   'idempotency_key_unavailable',
+  'idempotency_response_invalid',
+  'idempotency_response_pending',
   'idempotency_response_unavailable',
   'idempotency_retryable',
   'image_invalid',
@@ -128,12 +131,17 @@ export const SAFE_UPSTREAM_CODES = new Set([
   'invalid_state',
   'invalid_token',
   'inventory_item_duplicate',
+  'inventory_purchase_changed',
+  'invite_limit_reached',
+  'invite_not_found',
+  'invite_rate_limited',
   'item_not_found',
   'joining_disabled',
   'kind_invalid',
   'limit_exceeded',
   'limits_exceeded',
   'location_invalid',
+  'mail_unavailable',
   'mapping_incomplete',
   'member_context_changed',
   'member_deactivated',
@@ -163,6 +171,7 @@ export const SAFE_UPSTREAM_CODES = new Set([
   'not_admin',
   'not_creditor',
   'not_found',
+  'not_latest_completion',
   'not_owner',
   'not_party',
   'not_party_to_debt',
@@ -240,6 +249,8 @@ export const SAFE_UPSTREAM_CODES = new Set([
   'too_many_requests',
   'too_many_rows',
   'unauthorized',
+  'undo_expired',
+  'undo_invalid',
   'unit_invalid',
   'unsupported_currency',
   'unverified_provider',
@@ -264,18 +275,14 @@ export class ManaWgError extends Error {
   constructor(
     code: string,
     status: number,
-    options: { details?: string; retryAfterSeconds?: number } = {},
+    options: { details?: string; retryAfterSeconds?: number; cause?: unknown } = {},
   ) {
-    super(`ManaWG request failed: ${code}`);
+    super(`${SAFE_ERROR_MESSAGE}: ${code}`, { cause: options.cause });
     this.name = 'ManaWgError';
     this.code = code;
     this.status = status;
-    if (options.details !== undefined) {
-      this.details = options.details;
-    }
-    if (options.retryAfterSeconds !== undefined) {
-      this.retryAfterSeconds = options.retryAfterSeconds;
-    }
+    this.details = options.details;
+    this.retryAfterSeconds = options.retryAfterSeconds;
   }
 }
 
@@ -294,7 +301,7 @@ export function describeError(error: unknown): string {
   if (!(error instanceof ManaWgError)) {
     return SAFE_ERROR_MESSAGE;
   }
-  let message = `${SAFE_ERROR_MESSAGE}: ${error.code}`;
+  let message = error.message;
   const next = NEXT_STEP[error.code];
   if (next) {
     message = `${message} (${next})`;
@@ -306,4 +313,23 @@ export function describeError(error: unknown): string {
     message = `${message} retry_after_s=${error.retryAfterSeconds}`;
   }
   return message;
+}
+
+export function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** One server-side log line for a failed tool call or resource read; codes and names only, never upstream bodies. */
+export function describeFailure(source: string, error: unknown): string {
+  if (error instanceof ManaWgError) {
+    const retry =
+      error.retryAfterSeconds !== undefined ? ` retry_after_s=${error.retryAfterSeconds}` : '';
+    // The cause stays out of the model-facing message; the operator needs it to tell a bad
+    // password from an outage.
+    const cause = error.cause === undefined ? '' : ` cause=${errorMessage(error.cause)}`;
+    return `failure source=${source} code=${error.code} status=${error.status}${retry}${cause}`;
+  }
+  const name = error instanceof Error ? error.name : typeof error;
+  const stack = error instanceof Error && error.stack ? `\n${error.stack}` : '';
+  return `failure source=${source} kind=internal name=${name}${stack}`;
 }

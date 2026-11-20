@@ -1,6 +1,38 @@
 # Changelog
 
-## Unreleased
+## 0.3.0 (2026-11-19)
+
+### Added
+
+- 13 tools for app routes the server did not cover yet:
+  - `chore_complete_undo` takes back your latest chore completion; `chore_complete` now says to
+    keep its `completion` for it.
+  - `chore_swap_request` asks the flat to take over a chore (a noticeboard post tied to the chore,
+    with push).
+  - `shopping_update` renames a shopping item or changes its quantity, guarded by
+    `expectedUpdatedAt` and `expectedBoughtAt`.
+  - `event_occurrence_change` cancels (`cancel`) or detaches into a one-off event (`detach`) one
+    date of a recurring event. Destructive tool, gated by `MANAWG_ALLOW_DESTRUCTIVE`.
+  - `invite_create`, `invites_list`, `invite_revoke` and `invite_email` manage invite links, the
+    only way to add flatmates. `invite_revoke` and `invite_email`, which mails a join link to any
+    address, are destructive.
+  - `calendar_subscription_create` and, as destructive tools, `calendar_subscription_rotate` and
+    `calendar_subscription_revoke` complete the calendar feed lifecycle next to
+    `calendar_subscription_get`. The feed URL is a secret; the descriptions tell the agent to
+    show it to the user only.
+  - `imports_list` and, as a destructive tool, `import_undo` list and take back an import.
+- Reverse API surface check (`test/api-surface.test.ts`): every route of the app snapshot is either
+  called by a tool or resource or listed with a reason as intentionally not exposed, so a new app
+  route cannot go unnoticed.
+- Resource templates list their entities in `resources/list` and complete `{id}`, so resource
+  pickers in clients such as VS Code can fill them. Listing fails soft.
+- `MANAWG_TOOLSETS` registers only the named tool groups (plus `overview`), so a client that
+  struggles with long tool lists can get a short one. Unset keeps every tool.
+- Server metadata (`description`, `websiteUrl`, icons) in `initialize` and in `server.json`. The
+  server instructions name only the tools that are registered.
+- `glama.json` names the maintainer for the Glama directory.
+- Clients on the 2026-07-28 protocol revision may cache `tools/list`, `prompts/list`,
+  `resources/templates/list` and `server/discover` for an hour.
 
 ### Changed
 
@@ -8,9 +40,58 @@
   who may call it, what it changes or notifies and which error codes it returns.
 - Every tool input field carries a schema description: where the value comes from, its unit and
   what the default means.
-- `note_react` is marked `idempotentHint`, since it sets the reaction to a given state.
-- Fixes since 0.2.1: app API contract matched, HTTP transport hardened, `capPayload` no longer
-  loops on one-item arrays, `glama.json` added.
+- `idempotentHint` is set on the tools that put a given state, so repeating them changes nothing
+  more: `note_react`, `chat_react`, `chat_unreact`, `chat_mark_read`, `member_update`,
+  `notifications_update` and `wg_update`.
+- `chore_update` takes `title` and `expectedUpdatedAt` (the stale-save guard) and says so; the
+  description no longer claims the title cannot change.
+- `activity_get` gains an optional `limit` (80 to 320, default 80). `chat_messages` pages back
+  with `beforeId` only: the `before` parameter was never read by the app and is gone.
+- `recurring_create` and `recurring_update` accept `currency: "EUR"` only. The app rejects
+  anything else with `recurring_currency_unsupported`, so the schema now refuses it locally.
+- `import_preview` and `import_commit` describe all five sources, including `tricount_csv` and
+  `settleup_csv`.
+- Every call has one 45 second deadline across sign-in, attempts, retries and the flat lookup.
+  When it passes, or the client cancels, the tool answers `timeout` at once.
+- The release workflow checks the tag against `package.json`, `server.json` and the changelog,
+  sets `latest` only for final releases and creates the GitHub Release from this file.
+  `pnpm smoke` runs without credentials and checks the full tool list as well.
+
+### Fixed
+
+- Request bodies match the app API contract: `wg_update` takes only a required `name`, `chat_send`
+  is text only with a required `body`, `expense_update` no longer offers `currency`,
+  `settlement_commit` forwards the `offset` flag of preview splits, inventory quantities,
+  thresholds and deltas accept two decimals, `events_list` widens a bare-date `to` to the end of
+  that day, `notifications_update` accepts `notifyStatementEmail` and `export_get` accepts
+  `choreCompletions` and `inventory`.
+- `capPayload` no longer loops forever on one-item arrays.
+- The HTTP transport aborts upstream work when the client disconnects, and Supabase token calls
+  time out instead of blocking later ones.
+- A `401` caused by a wrong flat or membership (`not_a_member`, `member_deactivated`) no longer
+  wipes the session; only `auth_required` triggers a refresh. A refresh uses the session's own
+  refresh token, and the bootstrap token is tried at most once per process.
+- Two processes sharing the session cache no longer log each other out: when a refresh is
+  rejected, the process waits up to a second for the other one's newer session and adopts it.
+  The cache is never deleted, also not when the app clears the session cookie, and a process
+  without a session reads it before it signs in. The cache
+  file is written to a temporary file with mode `0600` and renamed over the old one.
+- A retried `DELETE` that finds the row already gone returns `{ deleted: true, alreadyGone: true }`
+  instead of a misleading `404`. A `PATCH` with an `expected*` guard is no longer replayed after
+  a network error, since the first attempt may have been applied.
+
+### Security
+
+- A keyless HTTP server bound to loopback validates the `Host` header, which blocks DNS rebinding.
+- CORS: the preflight allows the headers the browser asks for (`Access-Control-Request-Headers`)
+  and sets `Vary`, so MCP Inspector and 2.x SDK clients, which send `mcp-method` and `mcp-name`,
+  get through it.
+- `MANAWG_HTTP_CORS=1` without an API key (keyless loopback) no longer sends
+  `Access-Control-Allow-Origin: *` and no longer skips the Origin check: only `localhost`,
+  `127.0.0.1` and `[::1]` origins pass, others get `403` (preflight included). With an API key or
+  OAuth the answer stays `*`, since a foreign page holds no credential. This changes behaviour for
+  keyless self-hosters who called the endpoint from a non-loopback web page; the hosted server
+  uses OAuth and is unaffected.
 
 ## 0.2.1 (2026-11-04)
 

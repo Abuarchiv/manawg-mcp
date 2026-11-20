@@ -5,8 +5,10 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
+import type { McpServer } from '@modelcontextprotocol/server';
+import { afterEach } from 'vitest';
 import { createSessionController } from '../../src/auth.js';
-import type { AppConfig } from '../../src/config.js';
+import type { AppConfig, SupabaseAuthConfig } from '../../src/config.js';
 import {
   bearerCredentials,
   createManaWgClient,
@@ -14,21 +16,17 @@ import {
 } from '../../src/manawg-client.js';
 import { buildServer } from '../../src/server.js';
 
-/**
- * A stateful stand-in for the ManaWG app. It enforces what the real app enforces — Origin,
- * the Supabase auth cookie, idempotency keys, optimistic locking, strict request bodies — so
- * tests exercise the real session controller, HTTP client and MCP server end to end.
- */
-
 export const MEMBER_A = '00000000-0000-4000-8000-00000000000a';
 export const MEMBER_B = '00000000-0000-4000-8000-00000000000b';
 export const WG_CODE = 'K7Q2M9XD';
 export const SECOND_WG_CODE = 'H4N8R2TB';
 /** The access token the stub accepts as `Authorization: Bearer` (hosted OAuth mode). */
-export const BEARER_TOKEN = 'oauth-access-token';
+const BEARER_TOKEN = 'oauth-access-token';
+// Supabase names the cookie after the first label of the auth host, here `127.0.0.1`.
 const COOKIE = 'sb-127-auth-token';
+const COOKIE_VALUE_PREFIX = 'base64-';
 
-export type Seen = {
+type Seen = {
   method: string;
   path: string;
   query: Record<string, string>;
@@ -47,17 +45,17 @@ type Shopping = {
 type Chore = { id: string; title: string; nextDueAt: string; assignedMemberId: string | null };
 type Expense = { id: string; amountCents: number; description: string; splits: Json[] };
 
-export type StubApp = {
+type StubApp = {
   origin: string;
   seen: Seen[];
   /** Number of Supabase token requests (sign-ins and refreshes). */
   tokenCalls: () => number;
   /** The next WG request answers 401 as if the session had been revoked. */
   revokeSession: () => void;
-  /** Answer the next `count` WG requests with this status before behaving normally. */
-  failNext: (count: number, status: number, headers?: Record<string, string>) => void;
   /** Make the app unreachable (connection refused) for subsequent requests. */
   goOffline: () => Promise<void>;
+  /** Answer the next `count` WG requests with this status before behaving normally. */
+  failNext: (count: number, status: number, headers?: Record<string, string>) => void;
   state: {
     shopping: Shopping[];
     chores: Chore[];
@@ -76,8 +74,8 @@ function reply(res: ServerResponse, status: number, body: unknown, type = 'appli
   res.end(typeof body === 'string' ? body : JSON.stringify(body));
 }
 
-function fail(res: ServerResponse, status: number, code: string, extra: Json = {}) {
-  reply(res, status, { error: code, code, ...extra });
+function fail(res: ServerResponse, status: number, code: string) {
+  reply(res, status, { error: code, code });
 }
 
 async function readJson(req: IncomingMessage): Promise<unknown> {
@@ -103,14 +101,21 @@ function hasOnly(value: unknown, keys: string[]): boolean {
 function sessionToken(header: string | undefined): string | undefined {
   const part = header?.split('; ').find((entry) => entry.startsWith(`${COOKIE}=`));
   const value = part?.slice(COOKIE.length + 1);
-  if (!value?.startsWith('base64-')) {
+  if (!value?.startsWith(COOKIE_VALUE_PREFIX)) {
     return undefined;
   }
-  const session = JSON.parse(Buffer.from(value.slice(7), 'base64url').toString('utf8')) as Json;
+  const encoded = value.slice(COOKIE_VALUE_PREFIX.length);
+  const session = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) as Json;
   return typeof session.access_token === 'string' ? session.access_token : undefined;
 }
 
-export async function startStubApp(): Promise<StubApp> {
+/**
+ * A stateful stand-in for the ManaWG app, so tests exercise the real session controller, HTTP
+ * client and MCP server end to end. It enforces the request origin, the Supabase auth cookie (or
+ * a bearer token), idempotency keys on writes, the optimistic locks of shopping items, chores and
+ * settlements, and the strict `expected` body of a settlement commit. Any other GET answers 404.
+ */
+async function startStubApp(): Promise<StubApp> {
   const state: StubApp['state'] = {
     shopping: [],
     chores: [],
@@ -340,12 +345,12 @@ export async function startStubApp(): Promise<StubApp> {
       if (method === 'DELETE') return reply(res, 200, { deleted: true });
     }
 
+    if (resource === 'events' && id && method === 'GET') {
+      return reply(res, 200, { event: { id } });
+    }
+
     if (resource === 'export' && url.searchParams.get('format') === 'csv') {
       return reply(res, 200, 'id,description\n1,Pizza\n', 'text/csv; charset=utf-8');
-    }
-    if (method === 'GET') {
-      // Remaining collections the resources read: empty but valid.
-      return reply(res, 200, { items: [] });
     }
     return fail(res, 404, 'not_found');
   }
@@ -353,6 +358,7 @@ export async function startStubApp(): Promise<StubApp> {
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
   origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   let online = true;
+  const stop = () => new Promise<void>((resolve) => server.close(() => resolve()));
 
   return {
     origin,
@@ -367,11 +373,11 @@ export async function startStubApp(): Promise<StubApp> {
     },
     goOffline: async () => {
       online = false;
-      await new Promise<void>((resolve) => server.close(() => resolve()));
+      await stop();
     },
     close: async () => {
       if (online) {
-        await new Promise<void>((resolve) => server.close(() => resolve()));
+        await stop();
       }
     },
   };
@@ -387,51 +393,80 @@ export type Harness = {
   close: () => Promise<void>;
 };
 
-export async function startHarness(
-  options: {
-    allowDestructive?: boolean;
-    retryDelaysMs?: number[];
-    /** Default flat; `null` leaves it unset so the client resolves the account's only flat. */
-    defaultWgCode?: string | null;
-    /** `bearer` acts like hosted OAuth mode: a forwarded access token instead of a session. */
-    credentials?: 'session' | 'bearer';
-    wgs?: string[];
-  } = {},
-): Promise<Harness> {
+export type HarnessOptions = {
+  /** Default flat; `null` leaves it unset so the client resolves the account's only flat. */
+  defaultWgCode?: string | null;
+  /** `bearer` acts like hosted OAuth mode: a forwarded access token instead of a session. */
+  credentials?: 'session' | 'bearer';
+  wgs?: string[];
+};
+
+/** Connects an MCP client to `server` over an in-memory transport. */
+export async function connectClient(server: McpServer, name: string): Promise<Client> {
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name, version: '0.0.0' });
+  await Promise.all([client.connect(clientTransport), server.connect(serverTransport)]);
+  return client;
+}
+
+/**
+ * Registers an `afterEach` hook for the calling test file and returns the function that queues
+ * resources for it. Queued closers run last-in, first-out after every test.
+ */
+export function useCleanup(): (close: () => Promise<void> | void) => void {
+  const closers: Array<() => Promise<void> | void> = [];
+  afterEach(async () => {
+    while (closers.length > 0) {
+      await closers.pop()?.();
+    }
+  });
+  return (close) => {
+    closers.push(close);
+  };
+}
+
+/** Returns a function that starts harnesses and closes them after each test of the calling file. */
+export function useHarness(): (options?: HarnessOptions) => Promise<Harness> {
+  const later = useCleanup();
+  return async (options) => {
+    const harness = await startHarness(options);
+    later(harness.close);
+    return harness;
+  };
+}
+
+async function startHarness(options: HarnessOptions = {}): Promise<Harness> {
   const app = await startStubApp();
   if (options.wgs) {
     app.state.wgs = options.wgs;
   }
   const cache = join(tmpdir(), `manawg-flow-${randomUUID()}.json`);
   const defaultWgCode = options.defaultWgCode === undefined ? WG_CODE : options.defaultWgCode;
+  const auth: SupabaseAuthConfig = {
+    mode: 'session',
+    url: app.origin,
+    publishableKey: 'sb_publishable_test',
+    email: 'ada@example.test',
+    password: 'pw',
+    sessionCachePath: cache,
+  };
   const config: AppConfig = {
     baseUrl: app.origin,
     origin: app.origin,
     ...(defaultWgCode ? { defaultWgCode } : {}),
     timeoutMs: 5_000,
-    auth: {
-      mode: 'session',
-      url: app.origin,
-      publishableKey: 'sb_publishable_test',
-      email: 'ada@example.test',
-      password: 'pw',
-      sessionCachePath: cache,
-    },
-    allowDestructive: options.allowDestructive ?? false,
+    auth,
+    allowDestructive: false,
     transport: 'stdio',
     http: { host: '127.0.0.1', port: 0, path: '/mcp', cors: false, drainMs: 0 },
   };
   const credentials =
-    options.credentials === 'bearer' || config.auth.mode !== 'session'
+    options.credentials === 'bearer'
       ? bearerCredentials(BEARER_TOKEN)
-      : sessionCredentials(createSessionController(config.auth));
-  const manaWg = createManaWgClient(config, fetch, credentials, {
-    retryDelaysMs: options.retryDelaysMs ?? [1, 1],
-  });
+      : sessionCredentials(createSessionController(auth));
+  const manaWg = createManaWgClient(config, fetch, credentials, { retryDelaysMs: [1, 1] });
   const server = buildServer(manaWg, { allowDestructive: config.allowDestructive });
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  const client = new Client({ name: 'flows', version: '0.0.0' });
-  await Promise.all([client.connect(clientTransport), server.connect(serverTransport)]);
+  const client = await connectClient(server, 'flows');
 
   const textOf = (result: { content?: unknown }) =>
     (result.content as Array<{ text: string }>)[0]?.text ?? '';

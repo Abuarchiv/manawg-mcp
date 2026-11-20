@@ -12,7 +12,10 @@ type ToolSpec<TInput extends z.ZodType> = {
   path: (input: z.output<TInput>) => string[];
   query?: (input: z.output<TInput>) => QueryParams;
   body?: (input: z.output<TInput>) => unknown;
-  /** `destructive` tools are only registered when `MANAWG_ALLOW_DESTRUCTIVE` is set. */
+  /**
+   * `destructive` tools are only registered when `MANAWG_ALLOW_DESTRUCTIVE` is set. Besides
+   * deletions it covers tools that notify people (`reminder_send`, `invite_email`).
+   */
   gate?: ToolGate;
   scope?: RequestScope;
   /** Overrides the `readOnlyHint` derived from the method (e.g. a side-effect-free POST). */
@@ -29,8 +32,4 @@ export type ToolDef = ToolSpec<z.ZodType>;
 export function defineTool<TInput extends z.ZodType>(spec: ToolSpec<TInput>): ToolDef {
   // Handlers are typed against the parsed input here; the SDK validates before calling them.
   return spec as unknown as ToolDef;
-}
-
-export function selectTools(tools: ToolDef[], allowDestructive: boolean): ToolDef[] {
-  return allowDestructive ? tools : tools.filter((tool) => tool.gate !== 'destructive');
 }

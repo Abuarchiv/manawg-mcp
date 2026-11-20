@@ -23,8 +23,12 @@ pnpm install
 pnpm build
 ```
 
-Tests, lint and typecheck need no credentials. `pnpm live-check` talks to a real ManaWG instance and
-needs the env file described in the [self-hosting guide](docs/self-hosting.md#local-setup).
+Tests, lint, typecheck and `pnpm smoke` need no credentials. Smoke starts the built server with
+placeholder configuration only, ignores your shell environment and env file, and checks the
+advertised tools, resources and prompts against the registries in `dist/`, once without and once
+with `MANAWG_ALLOW_DESTRUCTIVE`. Run `pnpm build` first. `pnpm live-check` talks to a real ManaWG
+instance and needs the env file described in the
+[self-hosting guide](docs/self-hosting.md#local-setup).
 
 ## Rules for changes
 
@@ -33,7 +37,9 @@ needs the env file described in the [self-hosting guide](docs/self-hosting.md#lo
   together.
 - **Destructive tools stay gated.** Anything that deletes or cannot be undone registers only with
   `MANAWG_ALLOW_DESTRUCTIVE=1` and carries `destructiveHint`.
-- **No upstream text in errors.** Failures map to a code from the allowlist in `src/errors.ts`.
+- **No upstream text in errors.** A failure maps to a code from the allowlist in `src/errors.ts`,
+  or to a status-derived code such as `upstream_http_<status>`. Only `validation_errors` carries a
+  truncated detail.
 - **Changelog.** Note user-visible changes under the unreleased version in
   [CHANGELOG.md](CHANGELOG.md).
 
@@ -45,6 +51,17 @@ pnpm lint && pnpm typecheck && pnpm test && pnpm build && pnpm smoke
 
 Describe what changed and why, and link the issue if there is one. Keep a pull request to one
 topic.
+
+## Releasing (maintainers)
+
+1. Move the `Unreleased` entries in [CHANGELOG.md](CHANGELOG.md) under a `## X.Y.Z (date)` heading
+   and set the same version in `package.json` and `server.json`.
+2. Push the tag `vX.Y.Z`. The release workflow refuses a tag that disagrees with those files or
+   has no changelog section, runs lint, typecheck, tests, build and smoke, then publishes the
+   multi-arch image to GHCR and creates the GitHub Release with the changelog section as notes.
+   A prerelease tag (`vX.Y.Z-rc.1`) does not move the `latest` image tag and is marked as a
+   prerelease.
+3. Publishing to the MCP Registry is a separate manual step.
 
 ## Licence
 

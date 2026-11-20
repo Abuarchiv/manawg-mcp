@@ -1,32 +1,29 @@
 import { z } from 'zod';
+import type { ToolsetName } from './toolsets.js';
+
+type PromptArgs = Record<string, string | undefined>;
 
 export type PromptDef = {
   name: string;
   title: string;
   description: string;
-  args: z.ZodType;
-  render: (args: Record<string, string | undefined>) => string;
+  args: z.ZodType<PromptArgs>;
+  /** Tool groups the prompt calls; it is only offered when all of them are registered. */
+  toolsets: readonly ToolsetName[];
+  render: (args: PromptArgs) => string;
 };
 
 const noArgs = z.strictObject({});
 
-function prompt(
-  name: string,
-  title: string,
-  description: string,
-  args: z.ZodType,
-  render: (args: Record<string, string | undefined>) => string,
-): PromptDef {
-  return { name, title, description, args, render };
-}
-
 export const PROMPT_DEFS: PromptDef[] = [
-  prompt(
-    'daily_brief',
-    'Daily flat brief',
-    'Reads the dashboard, activity, shopping, chores and calendar and gives a compact status.',
-    z.strictObject({ focus: z.string().max(200).optional() }),
-    (args) => `Write a compact daily brief for the flat.
+  {
+    name: 'daily_brief',
+    title: 'Daily flat brief',
+    description:
+      'Reads the dashboard, activity, shopping, chores and calendar and gives a compact status.',
+    args: z.strictObject({ focus: z.string().max(200).optional() }),
+    toolsets: ['shopping', 'chores', 'calendar'],
+    render: (args) => `Write a compact daily brief for the flat.
 
 Steps:
 1. dashboard_get for balances, spending, open shopping, due chores and flat health.
@@ -42,13 +39,15 @@ Answer in the language of the conversation, at most 10 bullets, no tables:
 - posts with status open
 ${args.focus ? `\nThe user also wants to focus on: ${args.focus}` : ''}
 Invent nothing: every bullet must come from a tool answer; mark missing data briefly as "no data".`,
-  ),
-  prompt(
-    'shopping_run',
-    'Plan a shopping run',
-    'Combines the shopping list with the supplies and gives a grouped list for the run.',
-    noArgs,
-    () => `Plan a shopping run for the flat.
+  },
+  {
+    name: 'shopping_run',
+    title: 'Plan a shopping run',
+    description:
+      'Combines the shopping list with the supplies and gives a grouped list for the run.',
+    args: noArgs,
+    toolsets: ['shopping', 'supplies'],
+    render: () => `Plan a shopping run for the flat.
 
 Steps:
 1. shopping_list for all open and bought items.
@@ -60,13 +59,14 @@ Answer in the language of the conversation:
 - at the end: bought items that should be marked done with shopping_set_bought
 
 Change nothing: only plan, do not call any shopping tools.`,
-  ),
-  prompt(
-    'payment_reminder',
-    'Draft a payment reminder',
-    'Writes a friendly reminder about open balances. Draft only, nothing is sent.',
-    z.strictObject({ tone: z.string().max(200).optional() }),
-    (args) => `Write a friendly payment reminder for the flat.
+  },
+  {
+    name: 'payment_reminder',
+    title: 'Draft a payment reminder',
+    description: 'Writes a friendly reminder about open balances. Draft only, nothing is sent.',
+    args: z.strictObject({ tone: z.string().max(200).optional() }),
+    toolsets: ['money'],
+    render: (args) => `Write a friendly payment reminder for the flat.
 
 Steps:
 1. balances_get for open balances.
@@ -78,13 +78,14 @@ Answer in the language of the conversation:
 - factual, friendly wording without blame
 ${args.tone ? `\nRequested tone: ${args.tone}` : ''}
 IMPORTANT: return only the draft. Do not call reminder_send before the user explicitly agrees.`,
-  ),
-  prompt(
-    'settlement_plan',
-    'Suggest a settlement',
-    'Works out the fewest transfers between the members, without carrying them out.',
-    noArgs,
-    () => `Suggest the smallest set of payments that settles the flat.
+  },
+  {
+    name: 'settlement_plan',
+    title: 'Suggest a settlement',
+    description: 'Works out the fewest transfers between the members, without carrying them out.',
+    args: noArgs,
+    toolsets: ['money'],
+    render: () => `Suggest the smallest set of payments that settles the flat.
 
 Steps:
 1. dashboard_get (balances) for the balances of the whole flat; balances_get only shows what others owe the caller.
@@ -96,5 +97,5 @@ Answer in the language of the conversation:
 - explain any difference between dashboard_get and settlement_preview
 
 IMPORTANT: do not call settlement_commit. The plan is only a suggestion; carrying it out needs explicit approval.`,
-  ),
+  },
 ];

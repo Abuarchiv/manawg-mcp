@@ -1,6 +1,6 @@
 {
   "name": "manawg-mcp",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "private": true,
   "description": "MCP server for ManaWG, the free, open-source app for shared flats: expenses, cleaning rota, shopping list, calendar and chat as tools for AI assistants",
   "license": "Apache-2.0",
@@ -22,7 +22,6 @@
     "lint:fix": "biome check --write .",
     "live-check": "node scripts/live-check.mjs",
     "smoke": "node scripts/smoke-stdio.mjs",
-    "inspector": "npx -y @modelcontextprotocol/inspector node dist/index.js",
     "build": "rm -rf dist && tsc -p tsconfig.build.json"
   },
   "devDependencies": {

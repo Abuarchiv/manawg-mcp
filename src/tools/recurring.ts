@@ -3,9 +3,11 @@ import {
   amountCents,
   description,
   expenseCategory,
+  intervalMonths,
   isoDateTime,
-  splitSchema,
+  splitList,
   uuid,
+  withoutId,
 } from './shared.js';
 import { defineTool } from './types.js';
 
@@ -13,11 +15,23 @@ const templateId = uuid.describe(
   'Id of the fixed-cost template, as returned in recurringExpenses[].id by recurring_list or in recurringExpense.id by recurring_create.',
 );
 const templateCurrency =
-  'Only EUR is accepted by the app; any other value fails with recurring_currency_unsupported. Omit it.';
+  'Fixed-cost templates are always in EUR, which is the only accepted value (the app rejects others with recurring_currency_unsupported). Omit it.';
 const templateSplits =
   'Who owes what per charge, one entry per member. Amounts must add up to amountCents. Member ids come from members_list.';
 const expectedDueAt =
   'nextDueAt of the template as you last read it from recurring_get or recurring_list (ISO 8601 with offset). Used as a concurrency guard.';
+// The fields the app counts as an edit; the expectedNextDueAt guard alone changes nothing.
+const editFields = [
+  'description',
+  'category',
+  'amountCents',
+  'currency',
+  'paidByMemberId',
+  'intervalMonths',
+  'nextDueAt',
+  'splits',
+  'paused',
+] as const;
 
 export const recurringTools = [
   defineTool({
@@ -60,17 +74,9 @@ export const recurringTools = [
       nextDueAt: isoDateTime.describe(
         'When the first charge is due, ISO 8601 with offset. May lie up to 366 days in the past (then the app books the missed cycles) and up to 10 years ahead; later dates keep this day of the month.',
       ),
-      splits: z
-        .array(splitSchema.describe('One member share of each charge.'))
-        .min(1)
-        .max(50)
-        .describe(templateSplits),
-      currency: z.enum(['EUR', 'CHF', 'USD', 'GBP']).default('EUR').describe(templateCurrency),
-      intervalMonths: z
-        .number()
-        .int()
-        .min(1)
-        .max(24)
+      splits: splitList.describe(templateSplits),
+      currency: z.literal('EUR').default('EUR').describe(templateCurrency),
+      intervalMonths: intervalMonths
         .default(1)
         .describe('Months between two charges: 1 monthly, 3 quarterly, 12 yearly. Defaults to 1.'),
     }),
@@ -83,48 +89,41 @@ export const recurringTools = [
     description:
       'Change a fixed-cost template or pause and resume it (paused). Send only the fields to change; at least one is required (400 invalid_body otherwise). Use it for edits and pausing; to skip one cycle use recurring_advance, to remove the template for good use recurring_delete. Only the creator of the template or a flat admin may call it, others get 403 not_owner. Resuming does not book the missed cycles: the due date jumps to the next cycle day from today. Changing amountCents, paidByMemberId or splits is checked like recurring_create (403 paid_by_must_include_caller, 400 splits_sum_mismatch). Pass expectedNextDueAt to guard against concurrent edits or bookings: if the template moved meanwhile, the call fails with 409 recurring_expense_changed and nothing is written; read it again with recurring_get and decide. Returns the updated template as recurringExpense.',
     method: 'PATCH',
-    input: z.strictObject({
-      id: templateId,
-      description: description.describe('New label for the template.').optional(),
-      category: expenseCategory.describe('New category for booked expenses.').optional(),
-      amountCents: amountCents
-        .describe(
-          'New amount per charge in cents of EUR. If you change it, also send splits that add up to it unless the current splits already do.',
-        )
-        .optional(),
-      currency: z.enum(['EUR', 'CHF', 'USD', 'GBP']).describe(templateCurrency).optional(),
-      paidByMemberId: uuid.describe('New paying member, from members_list.').optional(),
-      intervalMonths: z
-        .number()
-        .int()
-        .min(1)
-        .max(24)
-        .describe('New number of months between charges, for example 1 monthly or 12 yearly.')
-        .optional(),
-      nextDueAt: isoDateTime
-        .describe(
-          'Move the next due date, ISO 8601 with offset. Must lie within 366 days in the past and 10 years ahead. Sending the unchanged value is harmless.',
-        )
-        .optional(),
-      splits: z
-        .array(splitSchema.describe('One member share of each charge.'))
-        .min(1)
-        .max(50)
-        .describe(`${templateSplits} Replaces the whole list.`)
-        .optional(),
-      paused: z
-        .boolean()
-        .describe(
-          'true pauses the template (no automatic bookings), false resumes it. Omit to leave the pause state as it is.',
-        )
-        .optional(),
-      expectedNextDueAt: isoDateTime.describe(expectedDueAt).optional(),
-    }),
+    input: z
+      .strictObject({
+        id: templateId,
+        description: description.optional().describe('New label for the template.'),
+        category: expenseCategory.optional().describe('New category for booked expenses.'),
+        amountCents: amountCents
+          .optional()
+          .describe(
+            'New amount per charge in cents of EUR. If you change it, also send splits that add up to it unless the current splits already do.',
+          ),
+        currency: z.literal('EUR').optional().describe(templateCurrency),
+        paidByMemberId: uuid.optional().describe('New paying member, from members_list.'),
+        intervalMonths: intervalMonths
+          .optional()
+          .describe('New number of months between charges, for example 1 monthly or 12 yearly.'),
+        nextDueAt: isoDateTime
+          .optional()
+          .describe(
+            'Move the next due date, ISO 8601 with offset. Must lie within 366 days in the past and 10 years ahead. Sending the unchanged value is harmless.',
+          ),
+        splits: splitList.optional().describe(`${templateSplits} Replaces the whole list.`),
+        paused: z
+          .boolean()
+          .optional()
+          .describe(
+            'true pauses the template (no automatic bookings), false resumes it. Omit to leave the pause state as it is.',
+          ),
+        expectedNextDueAt: isoDateTime.optional().describe(expectedDueAt),
+      })
+      .refine((input) => editFields.some((field) => input[field] !== undefined), {
+        message: 'Send at least one field to change',
+        path: ['description'],
+      }),
     path: (input) => ['recurring-expenses', input.id],
-    body: (input) => {
-      const { id, ...body } = input;
-      return body;
-    },
+    body: withoutId,
   }),
   defineTool({
     name: 'recurring_advance',
