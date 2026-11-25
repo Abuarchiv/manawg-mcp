@@ -18,6 +18,8 @@
   <a href="https://github.com/Abuarchiv/manawg-mcp/actions/workflows/ci.yml"><img src="https://github.com/Abuarchiv/manawg-mcp/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="https://github.com/Abuarchiv/manawg-mcp/releases/latest"><img src="https://img.shields.io/github/v/release/Abuarchiv/manawg-mcp?label=release" alt="Latest release"></a>
   <a href="https://registry.modelcontextprotocol.io/v0/servers?search=com.manawg/mcp"><img src="https://img.shields.io/badge/MCP_Registry-com.manawg%2Fmcp-black" alt="MCP Registry: com.manawg/mcp"></a>
+  <a href="https://glama.ai/mcp/servers/Abuarchiv/manawg-mcp"><img src="https://glama.ai/mcp/servers/Abuarchiv/manawg-mcp/badges/score.svg" alt="Glama score: Abuarchiv/manawg-mcp"></a>
+  <a href="https://glama.ai/mcp/connectors/com.manawg/mcp"><img src="https://glama.ai/mcp/connectors/com.manawg/mcp/badges/score.svg" alt="Glama score: hosted connector com.manawg/mcp"></a>
   <a href="https://github.com/Abuarchiv/manawg-mcp/pkgs/container/manawg-mcp"><img src="https://img.shields.io/badge/image-ghcr.io-2496ED?logo=docker&amp;logoColor=white" alt="Container image on GHCR"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue.svg" alt="License: Apache-2.0"></a>
 </p>
