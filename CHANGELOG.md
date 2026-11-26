@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+## 0.3.1 (2026-11-26)
+
+### Changed
+
+- Updates @biomejs/biome, @types/node and vitest within their compatible minor and patch ranges.
+
 ## 0.3.0 (2026-11-19)
 
 ### Added
