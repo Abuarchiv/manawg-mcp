@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+## 0.3.1 (2026-11-26)
+
+### Changed
+
+- Updates @biomejs/biome from 2.6.5 to 2.6.8, vitest from 5.1.0 to 5.1.1, and the resolved jose release from 6.2.15 to 6.2.18.
+
 ## 0.3.0 (2026-11-19)
 
 ### Added
